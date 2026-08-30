@@ -1,0 +1,17 @@
+{
+  "environment": "local",
+  "debug": false,
+  "auth": {
+    "region": "",
+    "userPoolId": "",
+    "userPoolClientId": "",
+    "cognitoDomain": "",
+    "entraEnabled": false,
+    "entraProviderName": null,
+    "loginMethods": "cognito"
+  },
+  "agent": {
+    "runtimeArn": "",
+    "qualifier": "DEFAULT"
+  }
+}

@@ -1,0 +1,23 @@
+node_modules/
+dist/
+cdk.out/
+cdk.out.*/
+runtime/node_modules/
+runtime/dist/
+runtime/deployment_package.zip
+coverage/
+.env
+.env.*
+!.env.example
+*.pem
+.DS_Store
+*.tsbuildinfo
+scripts/deploy-config.psd1
+
+# docは既定で除外し、公開対象の資料だけを明示的に管理する。
+doc/*
+!doc/deployment-guide.md
+!doc/folder-structure.md
+!doc/runtime-features.md
+!doc/security-notes.md
+!doc/ui-features.md

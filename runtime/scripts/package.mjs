@@ -1,0 +1,26 @@
+import archiver from "archiver";
+import { createWriteStream } from "node:fs";
+import { stat } from "node:fs/promises";
+import { once } from "node:events";
+
+const entryPoint = "dist/app.js";
+const outputPath = "deployment_package.zip";
+const uncompressedLimit = 750 * 1024 * 1024;
+const compressedLimit = 250 * 1024 * 1024;
+const manifest = Buffer.from('{"type":"module","engines":{"node":">=22 <23"}}\n');
+const entry = await stat(entryPoint);
+const uncompressed = entry.size + manifest.byteLength;
+if (uncompressed > uncompressedLimit) throw new Error(`Uncompressed package exceeds 750 MB: ${uncompressed}`);
+const output = createWriteStream(outputPath);
+const archive = archiver("zip", { zlib: { level: 9 } });
+archive.on("warning", (error) => { throw error; });
+archive.on("error", (error) => { throw error; });
+archive.pipe(output);
+archive.append("", { name: "dist/", mode: 0o40755 });
+archive.file(entryPoint, { name: entryPoint, mode: 0o100644 });
+archive.append(manifest, { name: "package.json", mode: 0o100644 });
+await archive.finalize();
+await once(output, "close");
+const compressed = (await stat(outputPath)).size;
+if (compressed > compressedLimit) throw new Error(`Compressed package exceeds 250 MB: ${compressed}`);
+console.log(JSON.stringify({ outputPath, compressedBytes: compressed, uncompressedBytes: uncompressed }));

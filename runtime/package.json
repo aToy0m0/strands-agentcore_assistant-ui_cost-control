@@ -1,0 +1,54 @@
+{
+  "name": "workmate-cost-controlled-agentcore-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "package": "npm run build && node scripts/package.mjs",
+    "deploy:check": "tsx scripts/deploy.ts --check",
+    "deploy": "tsx scripts/deploy.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run src",
+    "test:bff": "vitest run --config vitest.bff.config.ts",
+    "start": "node dist/app.js",
+    "dev": "tsx watch src/main.ts"
+  },
+  "engines": {
+    "node": ">=22 <25"
+  },
+  "dependencies": {
+    "@ag-ui/core": "0.0.57",
+    "@ag-ui/encoder": "0.0.57",
+    "@aws-sdk/client-bedrock-agent-runtime": "3.1092.0",
+    "@aws-sdk/client-bedrock-agentcore": "3.1092.0",
+    "@aws-sdk/client-bedrock-runtime": "3.1092.0",
+    "@aws-sdk/client-dynamodb": "3.1092.0",
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "@smithy/signature-v4": "5.6.12",
+    "@smithy/types": "4.17.2",
+    "@strands-agents/sdk": "1.10.0",
+    "express": "5.1.0",
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@aws-sdk/client-bedrock-agentcore-control": "3.1092.0",
+    "@aws-sdk/client-s3": "3.1092.0",
+    "@aws-sdk/client-sts": "3.1092.0",
+    "@types/archiver": "7.0.0",
+    "@types/express": "5.0.3",
+    "@types/node": "22.20.1",
+    "@types/supertest": "6.0.3",
+    "archiver": "7.0.1",
+    "esbuild": "0.25.12",
+    "supertest": "7.1.4",
+    "tsx": "4.23.1",
+    "typescript": "5.9.3",
+    "vitest": "3.2.7"
+  },
+  "packageManager": "npm@10.9.8",
+  "allowScripts": {
+    "esbuild@0.25.12": true,
+    "esbuild@0.28.1": true
+  }
+}
