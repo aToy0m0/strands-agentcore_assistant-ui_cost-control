@@ -4,7 +4,7 @@ import { useTheme } from "next-themes";
 import { LogOut, Maximize2, Menu, Minimize2, Settings, UserRound } from "lucide-react";
 import { toast } from "sonner";
 import type { RuntimeConfig } from "@/config";
-import { agent } from "@/lib/agents";
+import { createAgentProfile } from "@/lib/agents";
 import { userViewFromIdTokenClaims } from "@/lib/current-user";
 import { cn } from "@/lib/utils";
 import { AgUiRuntimeProvider } from "./runtime/ag-ui-runtime-provider";
@@ -18,6 +18,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { Toaster } from "./ui/sonner";
 
 export function Workspace({ config, onSignedOut }: { config: RuntimeConfig; onSignedOut: () => void }) {
+  const agent = createAgentProfile(config.ui.name);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -80,6 +81,7 @@ export function Workspace({ config, onSignedOut }: { config: RuntimeConfig; onSi
 
 function SettingsDialog({ open, onOpenChange, config, onSignOut }: { open: boolean; onOpenChange: (open: boolean) => void; config: RuntimeConfig; onSignOut: () => void }) {
   const { theme, setTheme } = useTheme();
+  const agent = createAgentProfile(config.ui.name);
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="min-h-[500px] overflow-hidden p-0">

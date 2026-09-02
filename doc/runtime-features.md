@@ -59,17 +59,22 @@ Browser
 
 モデル一覧は`shared/model-catalog.ts`をフロントエンドとRuntimeで共有し、UI表示とRuntime検証の二重管理を避けています。
 
-| 表示名 | プロバイダー | Reasoning | 入力token計数 |
-|---|---|---|---|
-| Claude Haiku 4.5 | Anthropic | ON/OFF、Low・Medium・High | Bedrock Runtime CountTokens |
-| Claude Sonnet 4.6 | Anthropic | ON/OFF、Low・Medium・High | Bedrock Runtime CountTokens |
-| Claude Sonnet 5 | Anthropic | 常時ON、Low・Medium・High | Bedrock Mantle Anthropic count_tokens |
+| 表示名 | プロバイダー | Reasoning | 入力token計数 | 制限方式 |
+|---|---|---|---|---|
+| Amazon Nova 2 Lite | Amazon | ON/OFF、Low・Medium・High | 応答usage | ソフト |
+| Claude Haiku 4.5 | Anthropic | ON/OFF、Low・Medium・High | 応答usage | ソフト |
+| Claude Sonnet 4.6 | Anthropic | ON/OFF、Low・Medium・High | 応答usage | ソフト |
+| Claude Sonnet 5 | Anthropic | 常時ON、Low・Medium・High | 応答usage | ソフト |
+| GPT-OSS 20B | OpenAI | 常時ON、Low・Medium・High | 応答usage | ソフト |
+| GPT-OSS 120B | OpenAI | 常時ON、Low・Medium・High | 応答usage | ソフト |
+| GLM 4.7 Flash | Z.AI | ON/OFF | 応答usage | ソフト |
+| GLM 4.7 | Z.AI | ON/OFF | 応答usage | ソフト |
 
-Runtimeは未知のモデル、CountTokens非対応モデル、未対応のEffort、余分な推論設定フィールドをエラーにします。Nova 2 Lite、GPT-OSS、GLM 4.7系はBedrockのモデルカード上でCount tokens非対応のため、費用上限を保証できる対象から除外しています。
+Runtimeは未知のモデル、未対応のEffort、余分な推論設定フィールドをエラーにします。全8モデルは最大出力だけを事前予約し、入力分を応答usageで加算するソフト制限です。受け付けた1回の呼び出しで上限を超える可能性があります。
 
 ## ユーザー単位のトークン上限
 
-Cognitoアクセストークンの`cognito:groups`にある`workmate-limit-<profileID>`から割り当てを確定します。未所属だけは既定プロファイルを使用し、複数所属・未知のプロファイルは拒否します。各LLM呼び出し前に`CountTokensの入力数 + maxOutputTokens`をユーザー枠から原子的に予約し、完了後にBedrock usageの`inputTokens + outputTokens`で精算します。これにより並行呼び出しでも設定トークン数を越えません。
+Cognitoアクセストークンの`cognito:groups`にある`workmate-limit-<profileID>`から割り当てを確定します。未所属だけは既定プロファイルを使用し、複数所属・未知のプロファイルは拒否します。各LLM呼び出し前に`maxOutputTokens`をユーザー枠から原子的に予約し、完了後にBedrock usageの`inputTokens + outputTokens`で精算します。未計数の入力分だけ実績が予約を上回る場合があります。
 
 ウィンドウはUTCの日次、月曜開始の週次、月次です。プロファイル変更後は再ログインが必要です。
 

@@ -1,11 +1,11 @@
 # フォルダ構成
 
-この資料は、`14_assistant-ui-ag-ui-cost-control`のソースコード、インフラ、テスト、生成物の配置意図を説明する。
+この資料は、リポジトリ内のソースコード、インフラ、テスト、生成物の配置意図を説明する。
 
 ## 全体構成
 
 <pre>
-14_assistant-ui-ag-ui-cost-control/
+repository-root/
 ├─ <strong><u>src/                              ブラウザで動くReactフロントエンドのソースコード</u></strong>
 │  ├─ components/                   画面固有のReactコンポーネント
 │  │  ├─ <em>runtime/                  assistant-uiとAgentCore Runtimeの通信・状態管理を接続するコード</em>

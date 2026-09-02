@@ -464,19 +464,18 @@ function InferenceControls() {
           <span className="truncate">{selectedModel.label}</span><ChevronDown className="size-3.5 shrink-0" />
         </button>
       </PopoverTrigger>
-      <PopoverContent align="end" side="top" className="w-[min(360px,calc(100vw-24px))] p-1.5">
-        <div role="listbox" aria-label="モデル" className="max-h-72 overflow-y-auto">
+      <PopoverContent align="end" side="top" collisionPadding={12} className="flex max-h-[var(--radix-popover-content-available-height)] w-[min(360px,calc(100vw-24px))] flex-col overflow-hidden p-1.5">
+        <div role="listbox" aria-label="モデル" className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
           {options.models.map((model) => (
-            <button key={model.id} type="button" role="option" aria-selected={model.id === selectedModel.id} className="relative flex min-h-14 w-full flex-col justify-center rounded-lg px-3 pr-9 text-left hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => selectModel(model.id)}>
+            <button key={model.id} type="button" role="option" aria-selected={model.id === selectedModel.id} className="relative flex min-h-14 w-full flex-col justify-center rounded-lg px-3 pr-9 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => selectModel(model.id)}>
               <span className="text-sm font-medium">{model.label}</span>
-              <span className="mt-0.5 text-[11px] text-muted-foreground">{model.pricing ? `入力 $${model.pricing.inputPerMillionTokens.toFixed(2)} / 出力 $${model.pricing.outputPerMillionTokens.toFixed(2)}（100万トークン）` : "料金情報を確認できません"}</span>
               {model.id === selectedModel.id && <Check className="absolute right-3 top-1/2 size-4 -translate-y-1/2" aria-hidden="true" />}
             </button>
           ))}
         </div>
-        <div className="mt-1 border-t px-2 py-2">
+        <div className="mt-1 shrink-0 border-t px-2 py-2">
           <div className="flex items-center justify-between gap-3">
-            <span><strong className="block text-xs">Reasoning</strong><small className="text-[10px] text-muted-foreground">{selectedModel.reasoning.control === "always-on" ? "停止不可・OFF時はLow" : enabled ? "有効" : "無効"}</small></span>
+            <span><strong className="block text-xs">Reasoning</strong>{selectedModel.reasoning.control === "always-on" && <small className="text-[10px] text-muted-foreground">停止不可・OFF時はLow</small>}</span>
             <Switch checked={enabled} onCheckedChange={setReasoningEnabled} aria-label="Reasoningを切り替える" />
           </div>
           {enabled && selectedModel.reasoning.efforts.length > 0 && (
@@ -488,7 +487,6 @@ function InferenceControls() {
             </div>
           )}
         </div>
-        <p className="border-t px-2 py-2 text-[10px] leading-4 text-muted-foreground">{options.pricingBasis}。キャッシュ、Batch、長文コンテキスト等は含みません。</p>
       </PopoverContent>
     </Popover>
   );

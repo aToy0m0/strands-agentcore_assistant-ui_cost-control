@@ -4,15 +4,7 @@ export type RuntimeModelOption = {
   id: string;
   label: string;
   provider: "amazon" | "anthropic" | "openai" | "zai";
-  pricing: {
-    currency: "USD";
-    region: "us-east-1";
-    tier: "standard";
-    inputPerMillionTokens: number;
-    outputPerMillionTokens: number;
-    verifiedAt: string;
-    effectiveUntil?: string;
-  } | null;
+  costControl: "hard" | "soft";
   reasoning: {
     control: "optional" | "always-on";
     efforts: readonly ReasoningEffort[];
@@ -25,8 +17,6 @@ export type RuntimeOptions = {
     model: string;
     reasoning: { enabled: true; effort: "medium" };
   };
-  verifiedAt: string;
-  pricingBasis: string;
   models: RuntimeModelOption[];
 };
 

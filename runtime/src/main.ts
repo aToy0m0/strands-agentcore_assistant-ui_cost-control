@@ -10,6 +10,7 @@ import { parseInferenceSelection } from "../../shared/model-catalog.js";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoBudgetLedger } from "./budget-ledger.js";
 import { assignedUserLimitProfile, parseUserLimitProfiles } from "../../shared/user-limit-profiles.js";
+import { DynamoModelPricingCatalog } from "./pricing-catalog.js";
 
 function required(name: string) {
   const value = process.env[name]?.trim();
@@ -21,12 +22,18 @@ const region = required("AWS_REGION");
 const gatewayUrl = required("GATEWAY_URL");
 const knowledgeBaseSearchTool = createKnowledgeBaseSearchTool(required("KNOWLEDGE_BASE_ID"), region);
 const memory = AgentCoreMemory.create(required("MEMORY_ID"), region);
-const budgetLedger = new DynamoBudgetLedger(new DynamoDBClient({ region }), {
+const dynamo = new DynamoDBClient({ region });
+const budgetLedger = new DynamoBudgetLedger(dynamo, {
   tableName: required("BUDGET_TABLE_NAME"),
   accountId: required("AWS_ACCOUNT_ID"),
   projectId: required("BUDGET_PROJECT_ID"),
   accountLimitNanoUsd: BigInt(required("ACCOUNT_MONTHLY_BUDGET_NANO_USD")),
   projectLimitNanoUsd: BigInt(required("PROJECT_MONTHLY_BUDGET_NANO_USD")),
+});
+const pricingCatalog = new DynamoModelPricingCatalog(dynamo, {
+  tableName: required("PRICING_TABLE_NAME"),
+  sourceRegion: region,
+  serviceTier: "standard",
 });
 const userLimitProfiles = parseUserLimitProfiles(required("USER_LIMIT_PROFILES_JSON"));
 const interruptedAgents = new Map<string, {
@@ -78,7 +85,7 @@ const app = createApp(async function* (input, cancelSignal, identity) {
   const agent = isResume
     ? pending?.agent
     : new Agent({
-      model: createBedrockModel(region, selection, budgetLedger, actorId, userProfile),
+      model: createBedrockModel(region, selection, budgetLedger, pricingCatalog, actorId, userProfile),
       systemPrompt: systemPromptWithMemory(personalMemory!),
       tools: [...utilityTools, knowledgeBaseSearchTool, gatewayClient!],
       messages: modelHistory!,

@@ -13,6 +13,7 @@ export type { LoginMethods };
 export type RuntimeConfig = {
   environment: string;
   debug: boolean;
+  ui: { name: string };
   auth: {
     region: string;
     userPoolId: string;
@@ -42,6 +43,7 @@ export function parseRuntimeConfig(input: unknown): RuntimeConfig {
   if (typeof input !== "object" || input === null) throw new Error("runtime-config.json must be an object");
   const value = input as RuntimeConfig;
   if (typeof value.debug !== "boolean") throw new Error("debug must be a boolean");
+  required(value.ui?.name, "ui.name");
   required(value.auth?.region, "auth.region");
   required(value.auth?.userPoolId, "auth.userPoolId");
   required(value.auth?.userPoolClientId, "auth.userPoolClientId");

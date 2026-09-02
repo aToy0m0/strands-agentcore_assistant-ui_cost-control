@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { BedrockModel, type BedrockModelOptions, type Message, type ModelStreamEvent, type StreamOptions } from "@strands-agents/sdk";
 import type { DynamoBudgetLedger } from "./budget-ledger.js";
-import { actualCost, maximumCost, nanoUsdFromUsd, totalTokens, utcMonth, type RateCard, type TokenUsage } from "./cost.js";
+import { actualCost, maximumCost, totalTokens, utcMonth, type TokenUsage } from "./cost.js";
 import { modelByKey, type InferenceSelection, type ReasoningEffort } from "../../shared/model-catalog.js";
 import { userLimitWindowKey, type UserLimitProfile } from "../../shared/user-limit-profiles.js";
 import { createTokenCounter, type FormattedBedrockRequest, type TokenCounter } from "./token-counter.js";
+import { rateCard, type DynamoModelPricingCatalog, type PricingRouting } from "./pricing-catalog.js";
 
 const CLAUDE_BUDGET: Record<ReasoningEffort, number> = {
   low: 1_024,
@@ -46,26 +47,20 @@ export function bedrockModelOptions(region: string, selection: InferenceSelectio
   }
 }
 
-export function createBedrockModel(region: string, selection: InferenceSelection, ledger: DynamoBudgetLedger, actorId: string, userProfile: UserLimitProfile): BedrockModel {
+export function createBedrockModel(region: string, selection: InferenceSelection, ledger: DynamoBudgetLedger, pricingCatalog: DynamoModelPricingCatalog, actorId: string, userProfile: UserLimitProfile): BedrockModel {
   const model = modelByKey(selection.model);
-  if (!model.pricing) throw new Error(`Pricing is not configured for model: ${model.key}`);
   if (model.tokenCounter.kind === "unsupported") throw new Error(model.tokenCounter.reason);
-  if (model.pricing.effectiveUntil && Date.now() > Date.parse(model.pricing.effectiveUntil)) {
-    throw new Error(`Pricing has expired for model: ${model.key}`);
-  }
-  const rate: RateCard = {
-    inputPerMillionTokens: nanoUsdFromUsd(String(model.pricing.inputPerMillionTokens)),
-    outputPerMillionTokens: nanoUsdFromUsd(String(model.pricing.outputPerMillionTokens)),
-  };
-  return new BudgetControlledBedrockModel(bedrockModelOptions(region, selection), createTokenCounter(region, model.tokenCounter), ledger, rate, actorId, userProfile);
+  const tokenCounter = model.tokenCounter.kind === "usage-only" ? undefined : createTokenCounter(region, model.tokenCounter);
+  return new BudgetControlledBedrockModel(bedrockModelOptions(region, selection), tokenCounter, ledger, pricingCatalog, model.pricingRouting, actorId, userProfile);
 }
 
 export class BudgetControlledBedrockModel extends BedrockModel {
   constructor(
     options: BedrockModelOptions,
-    private readonly tokenCounter: TokenCounter,
+    private readonly tokenCounter: TokenCounter | undefined,
     private readonly ledger: DynamoBudgetLedger,
-    private readonly rate: RateCard,
+    private readonly pricingCatalog: DynamoModelPricingCatalog,
+    private readonly pricingRouting: PricingRouting,
     private readonly actorId: string,
     private readonly userProfile: UserLimitProfile,
   ) { super(options); }
@@ -73,12 +68,16 @@ export class BudgetControlledBedrockModel extends BedrockModel {
   override async *stream(messages: Message[], options?: StreamOptions): AsyncIterable<ModelStreamEvent> {
     const config = this.getConfig();
     if (!config.modelId || !config.maxTokens) throw new Error("modelId and maxTokens are required for budget control");
-    const inputTokens = await this.strictCountTokens(messages, options);
+    const pricing = await this.pricingCatalog.requiredSnapshot(config.modelId, this.pricingRouting);
+    const rate = rateCard(pricing);
+    const inputTokens = this.tokenCounter ? await this.strictCountTokens(messages, options) : 0;
     const maximumTokens = inputTokens + config.maxTokens;
     if (!Number.isSafeInteger(maximumTokens)) throw new Error("maximum token reservation exceeds the safe integer range");
     const reservation = await this.ledger.reserve({
       requestId: randomUUID(), month: utcMonth(), modelId: config.modelId,
-      maximumNanoUsd: maximumCost(inputTokens, config.maxTokens, this.rate),
+      maximumNanoUsd: maximumCost(inputTokens, config.maxTokens, rate),
+      settlementMode: this.tokenCounter ? "bounded" : "usage-only",
+      pricing,
       user: {
         actorId: this.actorId,
         profileId: this.userProfile.id,
@@ -93,7 +92,7 @@ export class BudgetControlledBedrockModel extends BedrockModel {
       yield event;
     }
     if (!usage) throw new Error(`Bedrock usage was not returned; reservation remains active: ${reservation.requestId}`);
-    await this.ledger.settle(reservation.requestId, actualCost(usage, this.rate), totalTokens(usage));
+    await this.ledger.settle(reservation.requestId, actualCost(usage, rate), totalTokens(usage));
   }
 
   private async strictCountTokens(messages: Message[], options?: StreamOptions): Promise<number> {
@@ -101,6 +100,7 @@ export class BudgetControlledBedrockModel extends BedrockModel {
     const formatter = (this as unknown as { _formatRequest?: (messages: Message[], options?: StreamOptions) => FormattedBedrockRequest })._formatRequest;
     if (typeof formatter !== "function") throw new Error("Strands Bedrock request formatter is unavailable");
     const request = formatter.call(this, messages, options);
+    if (!this.tokenCounter) throw new Error("Preflight token counter is unavailable");
     return this.tokenCounter.count(request);
   }
 }

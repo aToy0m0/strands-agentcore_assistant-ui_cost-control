@@ -23,6 +23,8 @@ function Get-RequiredConfigString {
 
 $profile = Get-RequiredConfigString "Profile"
 $region = Get-RequiredConfigString "Region"
+$resourceNamePrefix = Get-RequiredConfigString "ResourceNamePrefix"
+$uiName = Get-RequiredConfigString "UiName"
 $webDebugMode = Get-RequiredConfigString "WebDebugMode"
 $knowledgeBaseId = Get-RequiredConfigString "KnowledgeBaseId"
 if ($knowledgeBaseId -notmatch '^[0-9A-Z]{10}$') {
@@ -33,6 +35,8 @@ if ($webDebugMode -notin @("on", "off")) {
 }
 
 $contexts = [ordered]@{
+    resourceNamePrefix  = $resourceNamePrefix
+    uiName              = $uiName
     cognitoDomainPrefix = Get-RequiredConfigString "CognitoDomainPrefix"
 }
 

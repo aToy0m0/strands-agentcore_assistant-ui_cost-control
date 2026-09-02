@@ -1,6 +1,9 @@
 {
   "environment": "local",
   "debug": false,
+  "ui": {
+    "name": "Workmate"
+  },
   "auth": {
     "region": "",
     "userPoolId": "",

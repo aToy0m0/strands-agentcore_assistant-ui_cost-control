@@ -1,0 +1,15 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AssumeProjectCdkBootstrapRoles",
+      "Effect": "Allow",
+      "Action": "sts:AssumeRole",
+      "Resource": [
+        "arn:aws:iam::<aws-account-id>:role/cdk-hnb659fds-deploy-role-<aws-account-id>-us-east-1",
+        "arn:aws:iam::<aws-account-id>:role/cdk-hnb659fds-file-publishing-role-<aws-account-id>-us-east-1",
+        "arn:aws:iam::<aws-account-id>:role/cdk-hnb659fds-lookup-role-<aws-account-id>-us-east-1"
+      ]
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 # セキュリティ上の注意と既知の制約
 
-最終更新日: 2026-08-30
+最終更新日: 2026-09-01
 
 本リポジトリは研究・学習用途のサンプルです。詳細な脅威モデルは[SECURITY.md](../SECURITY.md)を参照してください。
 
@@ -9,10 +9,10 @@
 - AgentCore RuntimeとGatewayはCognito JWT Authorizerで保護する
 - User Poolの自己登録を無効にし、App Clientのログイン方式も設定値に合わせて制限する
 - JWT Authorizer検証後のアクセストークン`sub`をユーザーIDとして固定する
-- Bedrock推論対象を、厳密な事前トークン計数と料金表を持つモデルだけに限定する
-- アカウント・プロジェクトの月額費用上限をDynamoDBトランザクションで事前予約する
-- Cognitoグループ別に、日次・週次・月次のユーザートークン上限を同じトランザクションで予約する
-- 未知モデル、CountTokens失敗、未知プロファイル、複数プロファイル割り当てではLLMを呼ばない
+- Bedrock推論対象を、料金表とBedrock usageによる実績精算が可能な8モデルに限定する
+- 全8モデルで最大出力の月額費用をDynamoDBトランザクションにより事前予約する
+- Cognitoグループ別に、日次・週次・月次のユーザートークン枠を同じトランザクションで予約し、入力分は実行後に加算する
+- 未知モデル、未知プロファイル、複数プロファイル割り当てではLLMを呼ばない
 - S3を非公開にし、Web配信はCloudFront OACだけを許可する
 
 `runtime-config.json`に含まれるUser Pool ID、App Client ID、Cognitoドメイン、Runtime ARNはpublic App Clientの接続情報であり、秘密情報ではありません。
@@ -28,6 +28,7 @@
 | ログのKMS暗号化・Data Protection | 未設定 | Runtimeログの本文保護は設定による出力停止と短期保持に依存 |
 | httpOnly Cookie | BFFを持たないため未対応 | JWTはAmplify既定のブラウザストレージにあり、XSS時に露出し得る |
 | LLM以外のAWS費用hard limit | 対象外 | Runtime、Memory、KMS、CloudFront、Logs等はAWS Budgets等で別途監視が必要 |
+| 全モデルの入力費用 | ソフト制限 | 1回の呼び出し、または同時実行分だけ設定上限を超える可能性がある |
 | 予約障害の照合ジョブ | 未実装 | Bedrock送信後にusageを取得できない場合、予約を安全側で保持し続ける |
 
 ## ユーザー上限の安全側動作

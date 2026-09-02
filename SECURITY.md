@@ -44,7 +44,7 @@ S3デプロイ用のカスタムリソースLambdaはCloudFormation実行時に�
 | **Information Disclosure** | AgentCore Memory | 他ユーザーの履歴・個人記憶の参照 | JWT Authorizer検証済みトークンの`sub`をRuntimeで`actorId`に固定。MemoryはCMKで暗号化 | 実装済み |
 | **Information Disclosure** | `runtime-config.json` | User Pool IDとApp Client IDの公開 | public App Clientの仕様上そもそも秘密情報ではない。SPAである以上隠蔽できない | 設計上の受容 |
 | **Information Disclosure** | ブラウザ | XSS発生時のトークン露出 | — | **未実装**（CSP等のレスポンスヘッダー未設定。httpOnly Cookie化には本構成が排除したBFFが必要） |
-| **Denial of Service** | AgentCore Runtime | 認証済み利用者による無制限のBedrock呼び出し | 費用hard limit、Cognitoグループ別ユーザートークン上限、DynamoDBの原子的予約 | 実装済み（時間当たりのリクエストレート制限は未実装） |
+| **Denial of Service** | AgentCore Runtime | 認証済み利用者による無制限のBedrock呼び出し | 全8モデルのsoft limit、Cognitoグループ別ユーザートークン上限、DynamoDBの原子的予約 | 実装済み（時間当たりのリクエストレート制限は未実装） |
 | **Elevation of Privilege** | IAMロール | 過剰な権限 | Runtimeロールをモデル・ログ・成果物・Memoryに、Gatewayロールを対象ツールLambdaの実行に限定 | 実装済み |
 
 ### 攻撃面
@@ -224,7 +224,7 @@ aws accessanalyzer list-analyzers --region us-east-1
 | リスク | 深刻度 | 対策 | 残存リスク |
 |---|---|---|---|
 | 未認証のBedrock呼び出し | HIGH | `customJwtAuthorizer`、`allowedClients`限定、自己登録無効 | LOW |
-| 認証済み利用者による課金の増大 | HIGH | アカウント・プロジェクト費用hard limit、ユーザー単位トークン上限、原子的な事前予約 | LOW（LLM以外のAWSサービス費用は対象外） |
+| 認証済み利用者による課金の増大 | HIGH | 全8モデルのsoft limit、ユーザー単位トークン上限、原子的な事前予約 | MEDIUM（1回または同時実行分の超過があり、LLM以外のAWSサービス費用も対象外） |
 | プロンプトインジェクション | HIGH | 入力スキーマ検証、読み取り専用Gatewayツール、制約付きシステムプロンプト | MEDIUM（Guardrails未導入。ただしGatewayツールは固定データの参照だけで被害範囲は限定的） |
 | XSS経由のトークン露出 | HIGH | React既定のエスケープのみ | **MEDIUM**（CSP未設定、`localStorage`保管） |
 | クリックジャッキング | MEDIUM | — | **MEDIUM**（X-Frame-Options / CSP frame-ancestorsが未設定） |
@@ -236,7 +236,7 @@ aws accessanalyzer list-analyzers --region us-east-1
 
 - **可用性**: `us-east-1`の単一リージョン構成。マルチリージョンは未検討
 - **永続性**: 完了したチャットターンはAgentCore Memoryへ保存し再読み込み後に復元する。プロジェクト、チャット名変更、アーカイブ、フィードバックは永続化しない
-- **コスト**: Bedrockの対応LLMモデル費用にはDynamoDB台帳による月額hard limitと、日次・週次・月次のユーザートークン上限を適用する。AgentCore Runtime、Memory、KMS、CloudFront、CloudWatch Logs等は対象外のためAWS Budgetsでの監視を併用する
+- **コスト**: 全8モデルにDynamoDB台帳による1回分の超過を許容するsoft limitを適用する。日次・週次・月次のユーザートークン上限も同じ方式で管理する。AgentCore Runtime、Memory、KMS、CloudFront、CloudWatch Logs等は対象外のためAWS Budgetsでの監視を併用する
 - **モデル可用性**: `Claude Sonnet 5`はアカウントによって実行が拒否される場合がある。詳細は[README](README.md#制約)を参照
 
 ### コンプライアンス上の考慮

@@ -1,3 +1,7 @@
 {
-  "app": "npx tsx infrastructure/app.ts"
+  "app": "npx tsx infrastructure/app.ts",
+  "context": {
+    "resourceNamePrefix": "workmate",
+    "uiName": "Workmate"
+  }
 }

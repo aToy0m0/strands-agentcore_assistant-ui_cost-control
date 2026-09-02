@@ -1,6 +1,8 @@
 @{
-  Profile              = "admin"
+  Profile              = "default"
   Region               = "us-east-1"
+  ResourceNamePrefix   = "workmate"
+  UiName               = "Workmate"
   WebDebugMode         = "off"
   CognitoDomainPrefix  = "<unique-domain-prefix>"
   CustomDomainEnabled  = $false

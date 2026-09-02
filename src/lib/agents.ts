@@ -5,9 +5,12 @@ export type AgentProfile = {
   badge: string;
 };
 
-export const agent: AgentProfile = {
-  id: "workmate",
-  name: "Workmate",
-  description: "AgentCore Runtime上で動作する単一エージェント",
-  badge: "WM",
-};
+export function createAgentProfile(name: string): AgentProfile {
+  const badge = Array.from(name).filter((character) => !/\s/u.test(character)).slice(0, 2).join("").toLocaleUpperCase();
+  return {
+    id: "workmate",
+    name,
+    description: "AgentCore Runtime上で動作する単一エージェント",
+    badge,
+  };
+}

@@ -6,6 +6,7 @@ import {
   type TransactWriteItemsCommandInput,
 } from "@aws-sdk/client-dynamodb";
 import type { NanoUsd } from "./cost.js";
+import type { PricingSnapshot } from "./pricing-catalog.js";
 
 export type Reservation = {
   requestId: string;
@@ -13,15 +14,24 @@ export type Reservation = {
   accountId: string;
   projectId: string;
   modelId: string;
+  pricingVersion: string;
+  pricingHistoryKey: string;
+  pricingVerifiedAt: string;
+  pricingVerifiedUntil: string;
+  inputNanoUsdPerMillionTokens: NanoUsd;
+  outputNanoUsdPerMillionTokens: NanoUsd;
   reservedNanoUsd: NanoUsd;
   actorId: string;
   userProfileId: string;
   userWindow: string;
   reservedTokens: number;
+  settlementMode: SettlementMode;
   status: "RESERVED" | "SETTLED";
   actualNanoUsd?: NanoUsd;
   actualTokens?: number;
 };
+
+export type SettlementMode = "bounded" | "usage-only";
 
 export class BudgetExceededError extends Error {
   constructor() {
@@ -49,13 +59,20 @@ export type UserTokenLimit = {
 export class DynamoBudgetLedger {
   constructor(private readonly client: DynamoDBClient, private readonly config: LedgerConfig) {}
 
-  async reserve(input: { requestId: string; month: string; modelId: string; maximumNanoUsd: NanoUsd; user: UserTokenLimit }): Promise<Reservation> {
+  async reserve(input: { requestId: string; month: string; modelId: string; maximumNanoUsd: NanoUsd; settlementMode: SettlementMode; pricing: PricingSnapshot; user: UserTokenLimit }): Promise<Reservation> {
     if (input.maximumNanoUsd < 0n) throw new Error("maximumNanoUsd must not be negative");
+    if (input.pricing.modelId !== input.modelId) throw new Error("pricing modelId must match reservation modelId");
     validateUserTokenLimit(input.user);
     const reservation: Reservation = {
       requestId: input.requestId,
       month: input.month,
       modelId: input.modelId,
+      pricingVersion: input.pricing.version,
+      pricingHistoryKey: `${input.pricing.verifiedAt}#${input.pricing.version}`,
+      pricingVerifiedAt: input.pricing.verifiedAt,
+      pricingVerifiedUntil: input.pricing.verifiedUntil,
+      inputNanoUsdPerMillionTokens: input.pricing.inputPerMillionTokens,
+      outputNanoUsdPerMillionTokens: input.pricing.outputPerMillionTokens,
       accountId: this.config.accountId,
       projectId: this.config.projectId,
       reservedNanoUsd: input.maximumNanoUsd,
@@ -63,6 +80,7 @@ export class DynamoBudgetLedger {
       userProfileId: input.user.profileId,
       userWindow: input.user.window,
       reservedTokens: input.user.maximumTokens,
+      settlementMode: input.settlementMode,
       status: "RESERVED",
     };
     const transaction: TransactWriteItemsCommandInput = {
@@ -90,18 +108,18 @@ export class DynamoBudgetLedger {
       if (reservation.actualNanoUsd === actualNanoUsd && reservation.actualTokens === actualTokens) return reservation;
       throw new Error(`reservation was already settled with another amount: ${requestId}`);
     }
-    if (actualNanoUsd < 0n || actualNanoUsd > reservation.reservedNanoUsd) {
+    if (actualNanoUsd < 0n || (reservation.settlementMode === "bounded" && actualNanoUsd > reservation.reservedNanoUsd)) {
       throw new Error(`actual cost is outside the reserved amount: ${requestId}`);
     }
-    if (!Number.isSafeInteger(actualTokens) || actualTokens < 0 || actualTokens > reservation.reservedTokens) {
+    if (!Number.isSafeInteger(actualTokens) || actualTokens < 0 || (reservation.settlementMode === "bounded" && actualTokens > reservation.reservedTokens)) {
       throw new Error(`actual tokens are outside the reserved amount: ${requestId}`);
     }
-    const refund = reservation.reservedNanoUsd - actualNanoUsd;
-    const tokenRefund = reservation.reservedTokens - actualTokens;
+    const difference = actualNanoUsd - reservation.reservedNanoUsd;
+    const tokenDifference = actualTokens - reservation.reservedTokens;
     await this.client.send(new TransactWriteItemsCommand({ TransactItems: [
-      this.settleCounter(reservation.month, `ACCOUNT#${reservation.accountId}`, reservation.reservedNanoUsd, actualNanoUsd, refund),
-      this.settleCounter(reservation.month, `PROJECT#${reservation.projectId}`, reservation.reservedNanoUsd, actualNanoUsd, refund),
-      this.settleTokenCounter(reservation, actualTokens, tokenRefund),
+      this.settleCounter(reservation.month, `ACCOUNT#${reservation.accountId}`, reservation.reservedNanoUsd, actualNanoUsd, difference),
+      this.settleCounter(reservation.month, `PROJECT#${reservation.projectId}`, reservation.reservedNanoUsd, actualNanoUsd, difference),
+      this.settleTokenCounter(reservation, actualTokens, tokenDifference),
       { Update: {
         TableName: this.config.tableName,
         Key: requestKey(requestId),
@@ -133,13 +151,13 @@ export class DynamoBudgetLedger {
     } };
   }
 
-  private settleCounter(month: string, scope: string, reserved: NanoUsd, actual: NanoUsd, refund: NanoUsd) {
+  private settleCounter(month: string, scope: string, reserved: NanoUsd, actual: NanoUsd, difference: NanoUsd) {
     return { Update: {
       TableName: this.config.tableName,
       Key: key(`MONTH#${month}`, scope),
-      UpdateExpression: "SET committedNanoUsd = committedNanoUsd - :refund, reservedNanoUsd = reservedNanoUsd - :reserved, spentNanoUsd = spentNanoUsd + :actual",
+      UpdateExpression: "SET committedNanoUsd = committedNanoUsd + :difference, reservedNanoUsd = reservedNanoUsd - :reserved, spentNanoUsd = spentNanoUsd + :actual",
       ConditionExpression: "reservedNanoUsd >= :reserved AND committedNanoUsd >= :reserved",
-      ExpressionAttributeValues: { ":refund": numberValue(refund), ":reserved": numberValue(reserved), ":actual": numberValue(actual) },
+      ExpressionAttributeValues: { ":difference": numberValue(difference), ":reserved": numberValue(reserved), ":actual": numberValue(actual) },
     } };
   }
 
@@ -158,14 +176,14 @@ export class DynamoBudgetLedger {
     } };
   }
 
-  private settleTokenCounter(reservation: Reservation, actualTokens: number, refundTokens: number) {
+  private settleTokenCounter(reservation: Reservation, actualTokens: number, tokenDifference: number) {
     return { Update: {
       TableName: this.config.tableName,
       Key: key(`USER_WINDOW#${reservation.userWindow}`, `USER#${reservation.actorId}`),
-      UpdateExpression: "SET committedTokens = committedTokens - :refund, reservedTokens = reservedTokens - :reserved, spentTokens = spentTokens + :actual",
+      UpdateExpression: "SET committedTokens = committedTokens + :difference, reservedTokens = reservedTokens - :reserved, spentTokens = spentTokens + :actual",
       ConditionExpression: "profileId = :profile AND reservedTokens >= :reserved AND committedTokens >= :reserved",
       ExpressionAttributeValues: {
-        ":profile": { S: reservation.userProfileId }, ":refund": numberValue(BigInt(refundTokens)),
+        ":profile": { S: reservation.userProfileId }, ":difference": numberValue(BigInt(tokenDifference)),
         ":reserved": numberValue(BigInt(reservation.reservedTokens)), ":actual": numberValue(BigInt(actualTokens)),
       },
     } };
@@ -192,24 +210,30 @@ function serializeReservation(value: Reservation) {
     ...requestKey(value.requestId),
     requestId: { S: value.requestId }, month: { S: value.month }, accountId: { S: value.accountId }, projectId: { S: value.projectId },
     modelId: { S: value.modelId }, reservedNanoUsd: numberValue(value.reservedNanoUsd),
+    pricingVersion: { S: value.pricingVersion }, pricingHistoryKey: { S: value.pricingHistoryKey }, pricingVerifiedAt: { S: value.pricingVerifiedAt }, pricingVerifiedUntil: { S: value.pricingVerifiedUntil },
+    inputNanoUsdPerMillionTokens: numberValue(value.inputNanoUsdPerMillionTokens), outputNanoUsdPerMillionTokens: numberValue(value.outputNanoUsdPerMillionTokens),
     actorId: { S: value.actorId }, userProfileId: { S: value.userProfileId }, userWindow: { S: value.userWindow },
-    reservedTokens: numberValue(BigInt(value.reservedTokens)), status: { S: value.status },
+    reservedTokens: numberValue(BigInt(value.reservedTokens)), settlementMode: { S: value.settlementMode }, status: { S: value.status },
   };
 }
 
 function deserializeReservation(item: Record<string, AttributeValue>): Reservation {
   const requestId = item.requestId?.S; const month = item.month?.S; const accountId = item.accountId?.S;
   const projectId = item.projectId?.S; const modelId = item.modelId?.S; const reserved = item.reservedNanoUsd?.N;
+  const pricingVersion = item.pricingVersion?.S; const pricingHistoryKey = item.pricingHistoryKey?.S; const pricingVerifiedAt = item.pricingVerifiedAt?.S; const pricingVerifiedUntil = item.pricingVerifiedUntil?.S;
+  const inputRate = item.inputNanoUsdPerMillionTokens?.N; const outputRate = item.outputNanoUsdPerMillionTokens?.N;
   const actorId = item.actorId?.S; const userProfileId = item.userProfileId?.S; const userWindow = item.userWindow?.S; const reservedTokens = item.reservedTokens?.N;
-  const status = item.status?.S; const actual = item.actualNanoUsd?.N; const actualTokens = item.actualTokens?.N;
-  if (!requestId || !month || !accountId || !projectId || !modelId || !reserved || !actorId || !userProfileId || !userWindow || !reservedTokens || (status !== "RESERVED" && status !== "SETTLED")) {
+  const settlementMode = item.settlementMode?.S; const status = item.status?.S; const actual = item.actualNanoUsd?.N; const actualTokens = item.actualTokens?.N;
+  if (!requestId || !month || !accountId || !projectId || !modelId || !reserved || !pricingVersion || !pricingHistoryKey || !pricingVerifiedAt || !pricingVerifiedUntil || !inputRate || !outputRate || !actorId || !userProfileId || !userWindow || !reservedTokens || (settlementMode !== "bounded" && settlementMode !== "usage-only") || (status !== "RESERVED" && status !== "SETTLED")) {
     throw new Error("invalid budget reservation item");
   }
   const reservedTokenCount = safeTokenNumber(reservedTokens);
   const actualTokenCount = actualTokens === undefined ? undefined : safeTokenNumber(actualTokens);
   return {
-    requestId, month, accountId, projectId, modelId, reservedNanoUsd: BigInt(reserved), actorId, userProfileId, userWindow,
-    reservedTokens: reservedTokenCount, status,
+    requestId, month, accountId, projectId, modelId, reservedNanoUsd: BigInt(reserved),
+    pricingVersion, pricingHistoryKey, pricingVerifiedAt, pricingVerifiedUntil, inputNanoUsdPerMillionTokens: BigInt(inputRate), outputNanoUsdPerMillionTokens: BigInt(outputRate),
+    actorId, userProfileId, userWindow,
+    reservedTokens: reservedTokenCount, settlementMode, status,
     ...(actual === undefined ? {} : { actualNanoUsd: BigInt(actual) }),
     ...(actualTokenCount === undefined ? {} : { actualTokens: actualTokenCount }),
   };
@@ -218,7 +242,10 @@ function deserializeReservation(item: Record<string, AttributeValue>): Reservati
 function sameReservation(left: Reservation, right: Reservation): boolean {
   return left.requestId === right.requestId && left.month === right.month && left.accountId === right.accountId && left.projectId === right.projectId
     && left.modelId === right.modelId && left.reservedNanoUsd === right.reservedNanoUsd && left.actorId === right.actorId
-    && left.userProfileId === right.userProfileId && left.userWindow === right.userWindow && left.reservedTokens === right.reservedTokens;
+    && left.pricingVersion === right.pricingVersion && left.pricingHistoryKey === right.pricingHistoryKey && left.pricingVerifiedAt === right.pricingVerifiedAt && left.pricingVerifiedUntil === right.pricingVerifiedUntil
+    && left.inputNanoUsdPerMillionTokens === right.inputNanoUsdPerMillionTokens && left.outputNanoUsdPerMillionTokens === right.outputNanoUsdPerMillionTokens
+    && left.userProfileId === right.userProfileId && left.userWindow === right.userWindow && left.reservedTokens === right.reservedTokens
+    && left.settlementMode === right.settlementMode;
 }
 
 function validateUserTokenLimit(user: UserTokenLimit): void {

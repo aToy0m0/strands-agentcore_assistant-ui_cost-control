@@ -6,6 +6,8 @@ runtime/node_modules/
 runtime/dist/
 runtime/deployment_package.zip
 coverage/
+__pycache__/
+*.py[cod]
 .env
 .env.*
 !.env.example
@@ -13,11 +15,20 @@ coverage/
 .DS_Store
 *.tsbuildinfo
 scripts/deploy-config.psd1
+/_*/
+.codex/
+.claude/
+.playwright-cli/
+.playwright-mcp/
 
 # docは既定で除外し、公開対象の資料だけを明示的に管理する。
 doc/*
 !doc/deployment-guide.md
+!doc/cost-control-design.md
+!doc/custom-domain-deployment.md
+!doc/deployment-context-options.md
 !doc/folder-structure.md
+!doc/pricing-api-strategy.md
 !doc/runtime-features.md
 !doc/security-notes.md
 !doc/ui-features.md

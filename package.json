@@ -15,6 +15,7 @@
     "runtime:build": "npm ci --prefix runtime --no-audit --no-fund && npm run package --prefix runtime",
     "runtime:test": "npm test --prefix runtime",
     "gateway:test": "node --test gateway-tool/index.node-test.mjs",
+    "pricing:test": "python -m unittest discover -s pricing-verifier -p test_*.py",
     "cdk:synth": "npm run build && npm run runtime:build && cdk synth",
     "cdk:diff": "npm run build && npm run runtime:build && cdk diff WorkmateCostControlStack",
     "deploy": "npm run build && npm run runtime:build && cdk deploy WorkmateCostControlStack --require-approval never",
@@ -22,7 +23,12 @@
     "cognito:user:create": "node scripts/manage-cognito-user.mjs create",
     "cognito:user:set-password": "node scripts/manage-cognito-user.mjs set-password",
     "cognito:user:set-limit-profile": "node scripts/manage-cognito-user.mjs set-limit-profile",
-    "verify": "npm run typecheck && npm run lint && npm run test && npm run runtime:test && npm run gateway:test && cdk synth"
+    "pricing:list": "node scripts/manage-model-pricing.mjs list",
+    "pricing:show": "node scripts/manage-model-pricing.mjs show",
+    "pricing:history": "node scripts/manage-model-pricing.mjs history",
+    "pricing:request": "node scripts/manage-model-pricing.mjs request",
+    "pricing:disable": "node scripts/manage-model-pricing.mjs disable",
+    "verify": "npm run typecheck && npm run lint && npm run test && npm run runtime:test && npm run gateway:test && npm run pricing:test && cdk synth"
   },
   "dependencies": {
     "@ag-ui/client": "^0.0.57",

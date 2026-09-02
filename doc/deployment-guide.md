@@ -24,9 +24,20 @@ Copy-Item .\scripts\deploy-config.example.psd1 .\scripts\deploy-config.psd1
 
 `deploy-config.psd1`のプレースホルダーをデプロイ済み環境の値へ置き換える。このファイルは`.gitignore`対象となる。`Region`は`us-east-1`、`WebDebugMode`は`off`。クライアントシークレット本文は記載せず、Secrets Managerのシークレット名だけを設定する。
 
+```powershell
+ResourceNamePrefix = "workmate"
+UiName = "Workmate"
+```
+
+`ResourceNamePrefix`は明示名を持つAWSリソース、費用台帳のプロジェクトID、`CostGroup`タグへ使う。既存環境で変更すると一部リソースが置換されるため、初回デプロイ後は固定する。Cognito提供ドメインは`CognitoDomainPrefix`、アプリ公開ドメインは`CustomDomainName`で個別に設定する。
+
+デプロイ後、Billing and Cost Managementの「Cost allocation tags」でユーザー定義タグ`CostGroup`を有効化する。有効化後はCost ExplorerやCost and Usage Reportで接頭辞ごとに集計できる。タグキーの表示と有効化には時間差があるため、AWS公式の[ユーザー定義コスト配分タグ有効化手順](https://docs.aws.amazon.com/awsaccountbilling/latest/aboutv2/activating-tags.html)に従う。
+
 ユーザー上限プロファイルは`UserLimitProfiles`へ定義します。`default = $true`は必ず1件だけ必要です。`window`は`daily`、`weekly`、`monthly`のいずれか、`tokenLimit`は正の整数です。日・週・月の境界はUTCで、週次は月曜00:00 UTCに開始します。
 
 独自ドメイン連携は`CustomDomainEnabled`で切り替えます。証明書発行前は次の設定でCloudFront標準URLを使用できます。
+
+証明書の確認、DNS／HTTPS検証、切り戻しは[カスタムドメインのデプロイ手順](custom-domain-deployment.md)を参照する。
 
 ```powershell
 CustomDomainEnabled = $false
@@ -74,7 +85,7 @@ aws login --profile admin
 デプロイ後、初期ユーザーと恒久パスワードを作ります。
 
 ```powershell
-npm run cognito:user:create -- --email user@example.com --limit-profile weekly --profile default
+node .\scripts\manage-cognito-user.mjs create --email=user@example.com --limit-profile=weekly --profile=default
 ```
 
 `user@example.com`は作成したい初期ユーザーのメールアドレスです。Cognito側の検証済み属性として登録されるだけで、実際にメールは送信されません。
@@ -82,10 +93,28 @@ npm run cognito:user:create -- --email user@example.com --limit-profile weekly -
 既存ユーザーの割り当てを変更する場合は次を実行します。CDKが作成した`workmate-limit-<profileID>` Cognitoグループへ1つだけ所属させます。
 
 ```powershell
-npm run cognito:user:set-limit-profile -- --email user@example.com --limit-profile daily --profile default
+node .\scripts\manage-cognito-user.mjs set-limit-profile --email=user@example.com --limit-profile=daily --profile=default
 ```
 
 新しい割り当ては既存のアクセストークンには反映されないため、対象ユーザーは再ログインします。グループ未所属は既定プロファイル、複数所属や削除済みプロファイルIDは安全側で実行拒否となります。
+
+## モデル価格マスタを確認する
+
+価格照合Lambdaはデプロイ時と毎日JST 00:00（UTC 15:00）に実行される。AWS Price List Query APIと一致したモデルだけ確認期限を48時間後へ延長し、単価差、結果の欠落・重複、未知の単位を検出したモデルは停止する。照合履歴は180日保持する。
+
+```powershell
+node .\scripts\manage-model-pricing.mjs list --profile=default
+
+node .\scripts\manage-model-pricing.mjs history `
+  --model-id=us.anthropic.claude-sonnet-5 `
+  --profile=default
+
+node .\scripts\manage-model-pricing.mjs request `
+  --request-id=<request-id> `
+  --profile=default
+```
+
+価格取得元、停止条件、履歴の対応関係は[モデル価格調査APIと自動照合方針](pricing-api-strategy.md)を参照する。
 
 スクリプトが表示するパスワードは安全な保管先へ移し、ターミナル履歴の取り扱いに注意してください。
 

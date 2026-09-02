@@ -97,6 +97,7 @@ export class BedrockMantleAnthropicTokenCounter implements TokenCounter {
 
 export function createTokenCounter(region: string, config: TokenCounterConfig): TokenCounter {
   if (config.kind === "unsupported") throw new Error(config.reason);
+  if (config.kind === "usage-only") throw new Error("Usage-only models do not have a preflight token counter");
   const client = new BedrockRuntimeClient({ region });
   if (config.kind === "bedrock-runtime") return new BedrockRuntimeTokenCounter(client, config.modelId);
   return new BedrockMantleAnthropicTokenCounter(region, client.config.credentials, config.modelId);

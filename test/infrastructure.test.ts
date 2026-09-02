@@ -1,13 +1,15 @@
 import { App } from "aws-cdk-lib";
 import { Match, Template } from "aws-cdk-lib/assertions";
 import { describe, expect, it } from "vitest";
-import { decodeBase64UrlContext, WorkmateCostControlStack, resolveLogRetention, resolveMonthlyBudgetNanoUsd, resolveWebDebugMode } from "../infrastructure/stack.js";
+import { decodeBase64UrlContext, WorkmateCostControlStack, resolveLogRetention, resolveMonthlyBudgetNanoUsd, resolveResourceNamePrefix, resolveUiName, resolveWebDebugMode } from "../infrastructure/stack.js";
 import { RetentionDays } from "aws-cdk-lib/aws-logs";
 
 function template(context: Record<string, unknown> = {}) {
   const app = new App({ context: {
+    resourceNamePrefix: "workmate-14",
+    uiName: "Workmate",
     customDomainEnabled: true,
-    customDomainName: "cost-control.example.com",
+    customDomainName: "workmate14.example.com",
     hostedZoneId: "Z1234567890ABC",
     hostedZoneName: "example.com",
     certificateArn: "arn:aws:acm:us-east-1:123456789012:certificate/00000000-0000-0000-0000-000000000003",
@@ -20,24 +22,24 @@ function template(context: Record<string, unknown> = {}) {
 
 function entraContext() {
   return {
-    cognitoDomainPrefix: "cost-control-entra-test",
+    cognitoDomainPrefix: "workmate12-entra-test",
     entraEnabled: true,
     entraTenantId: "00000000-0000-0000-0000-000000000001",
     entraClientId: "00000000-0000-0000-0000-000000000002",
-    entraClientSecretName: "cost-control/entra/client-secret",
+    entraClientSecretName: "workmate12/entra/client-secret",
   };
 }
 
 describe("WorkmateCostControlStack", () => {
   it("Cognito認証・静的Web・CodeZip Runtimeだけを構築する", () => {
-    const value = template({ cognitoDomainPrefix: "cost-control-test" });
+    const value = template({ cognitoDomainPrefix: "workmate12-test" });
     value.resourceCountIs("AWS::Cognito::UserPool", 1);
     value.resourceCountIs("AWS::Cognito::UserPoolClient", 1);
     value.resourceCountIs("AWS::Cognito::UserPoolDomain", 1);
     value.resourceCountIs("AWS::Cognito::UserPoolIdentityProvider", 0);
     value.resourceCountIs("AWS::BedrockAgentCore::Runtime", 1);
     value.resourceCountIs("AWS::CloudFront::Distribution", 1);
-    value.resourceCountIs("AWS::DynamoDB::Table", 1);
+    value.resourceCountIs("AWS::DynamoDB::Table", 3);
     value.resourceCountIs("AWS::Route53::RecordSet", 1);
     value.resourceCountIs("AWS::RDS::DBInstance", 0);
     value.resourceCountIs("AWS::Lambda::Url", 0);
@@ -51,11 +53,36 @@ describe("WorkmateCostControlStack", () => {
     });
   });
 
+  it("リソース接頭辞を明示名と費用台帳のプロジェクトIDへ統一して使う", () => {
+    const value = template({ resourceNamePrefix: "sample-21", cognitoDomainPrefix: "sample21-test" });
+    value.hasResourceProperties("AWS::Lambda::Function", Match.objectLike({ FunctionName: "sample-21-support-directory-tool" }));
+    value.hasResourceProperties("AWS::BedrockAgentCore::Gateway", Match.objectLike({ Name: "sample-21-tools" }));
+    value.hasResourceProperties("AWS::BedrockAgentCore::Runtime", Match.objectLike({
+      AgentRuntimeName: "sample_21_cost_control",
+      EnvironmentVariables: Match.objectLike({ BUDGET_PROJECT_ID: "sample-21" }),
+    }));
+  });
+
+  it("タグ対応リソースへCostGroupタグを設定する", () => {
+    const value = template({ resourceNamePrefix: "sample-21", cognitoDomainPrefix: "sample21-cost-tag-test" });
+    const costGroupTag = { Key: "CostGroup", Value: "sample-21" };
+    value.hasResourceProperties("AWS::S3::Bucket", Match.objectLike({ Tags: Match.arrayWith([costGroupTag]) }));
+    value.hasResourceProperties("AWS::DynamoDB::Table", Match.objectLike({ Tags: Match.arrayWith([costGroupTag]) }));
+    value.hasResourceProperties("AWS::Lambda::Function", Match.objectLike({ Tags: Match.arrayWith([costGroupTag]) }));
+  });
+
+  it("リソース接頭辞とUI名の不正値を拒否する", () => {
+    expect(resolveResourceNamePrefix("sample-21")).toBe("sample-21");
+    expect(() => resolveResourceNamePrefix("Sample_21")).toThrow("resourceNamePrefix");
+    expect(resolveUiName("  社内アシスタント  ")).toBe("社内アシスタント");
+    expect(() => resolveUiName(" ")).toThrow("uiName");
+  });
+
   it("既存証明書をCloudFrontへ設定し、既存Hosted ZoneへAlias Aレコードだけを追加する", () => {
     const value = template();
     value.hasResourceProperties("AWS::CloudFront::Distribution", Match.objectLike({
       DistributionConfig: Match.objectLike({
-        Aliases: ["cost-control.example.com"],
+        Aliases: ["workmate14.example.com"],
         ViewerCertificate: Match.objectLike({
           AcmCertificateArn: "arn:aws:acm:us-east-1:123456789012:certificate/00000000-0000-0000-0000-000000000003",
           MinimumProtocolVersion: "TLSv1.2_2021",
@@ -64,7 +91,7 @@ describe("WorkmateCostControlStack", () => {
     }));
     value.hasResourceProperties("AWS::Route53::RecordSet", Match.objectLike({
       HostedZoneId: "Z1234567890ABC",
-      Name: "cost-control.example.com.",
+      Name: "workmate14.example.com.",
       Type: "A",
       AliasTarget: Match.objectLike({ DNSName: Match.anyValue() }),
     }));
@@ -73,7 +100,7 @@ describe("WorkmateCostControlStack", () => {
   });
 
   it("カスタムドメインがHosted Zone配下でなければ拒否する", () => {
-    expect(() => template({ customDomainName: "cost-control.other.example" })).toThrow("must be a subdomain");
+    expect(() => template({ customDomainName: "workmate14.other.example" })).toThrow("must be a subdomain");
   });
 
   it("カスタムドメイン無効時は証明書設定なしでCloudFront標準ドメインを使う", () => {
@@ -95,16 +122,64 @@ describe("WorkmateCostControlStack", () => {
   });
 
   it("アカウント・プロジェクト月額上限と台帳をRuntimeへ設定する", () => {
-    const value = template({ cognitoDomainPrefix: "cost-control-budget-test", accountMonthlyBudgetUsd: "25.5", projectMonthlyBudgetUsd: "10" });
+    const value = template({ cognitoDomainPrefix: "workmate14-budget-test", accountMonthlyBudgetUsd: "25.5", projectMonthlyBudgetUsd: "10" });
     value.hasResourceProperties("AWS::DynamoDB::Table", Match.objectLike({ BillingMode: "PAY_PER_REQUEST" }));
     value.hasResourceProperties("AWS::BedrockAgentCore::Runtime", Match.objectLike({
       EnvironmentVariables: Match.objectLike({
         ACCOUNT_MONTHLY_BUDGET_NANO_USD: "25500000000",
         PROJECT_MONTHLY_BUDGET_NANO_USD: "10000000000",
-        BUDGET_PROJECT_ID: "cost-control",
+        BUDGET_PROJECT_ID: "workmate-14",
         BUDGET_TABLE_NAME: Match.anyValue(),
+        PRICING_TABLE_NAME: Match.anyValue(),
       }),
     }));
+  });
+
+  it("モデル価格を専用DynamoDBテーブルへ置き、Runtimeへ読み取りだけを許可する", () => {
+    const value = template({ cognitoDomainPrefix: "workmate14-pricing-test" });
+    value.hasResourceProperties("AWS::DynamoDB::Table", Match.objectLike({
+      AttributeDefinitions: [{ AttributeName: "modelId", AttributeType: "S" }],
+      KeySchema: [{ AttributeName: "modelId", KeyType: "HASH" }],
+      BillingMode: "PAY_PER_REQUEST",
+      PointInTimeRecoverySpecification: { PointInTimeRecoveryEnabled: true },
+    }));
+    const policies = JSON.stringify(value.findResources("AWS::IAM::Policy"));
+    expect(policies).toContain("dynamodb:GetItem");
+    expect(policies).toContain("ModelPricingCatalog");
+  });
+
+  it("公式Price Listと日次照合し、一致時だけ48時間の確認期限を延長する", () => {
+    const value = template({ cognitoDomainPrefix: "workmate14-pricing-verifier-test" });
+    value.hasResourceProperties("AWS::Lambda::Function", Match.objectLike({
+      Handler: "index.lambda_handler",
+      Runtime: "python3.13",
+      Timeout: 120,
+      Environment: { Variables: Match.objectLike({
+        PRICING_TABLE_NAME: Match.anyValue(),
+        PRICING_HISTORY_TABLE_NAME: Match.anyValue(),
+        PRICE_VALIDITY_HOURS: "48",
+      }) },
+    }));
+    value.hasResourceProperties("AWS::Events::Rule", Match.objectLike({
+      ScheduleExpression: "cron(0 15 * * ? *)",
+      State: "ENABLED",
+    }));
+    value.hasResourceProperties("AWS::DynamoDB::Table", Match.objectLike({
+      AttributeDefinitions: [
+        { AttributeName: "modelId", AttributeType: "S" },
+        { AttributeName: "verificationId", AttributeType: "S" },
+      ],
+      KeySchema: [
+        { AttributeName: "modelId", KeyType: "HASH" },
+        { AttributeName: "verificationId", KeyType: "RANGE" },
+      ],
+      TimeToLiveSpecification: { AttributeName: "expiresAt", Enabled: true },
+    }));
+    const templateJson = JSON.stringify(value.toJSON());
+    expect(templateJson).toContain("dynamodb:TransactWriteItems");
+    expect(templateJson).toContain("pricing:GetProducts");
+    expect(templateJson).toContain("priceListInputUsageType");
+    expect(templateJson).toContain("AmazonBedrockFoundationModels");
   });
 
   it("ユーザー上限プロファイルをCognitoグループとRuntimeへ設定する", () => {
@@ -134,16 +209,16 @@ describe("WorkmateCostControlStack", () => {
     ]) })).toThrow("exactly one default");
   });
 
-  it("CountTokens対応モデルだけに推論権限を限定し、Sonnet 5はMantle計数だけを許可する", () => {
+  it("8モデルへ推論権限を付け、未使用のCountTokens権限を付けない", () => {
     const policies = JSON.stringify(template().findResources("AWS::IAM::Policy"));
     expect(policies).toContain("claude-haiku-4-5");
     expect(policies).toContain("claude-sonnet-4-6");
     expect(policies).toContain("claude-sonnet-5");
-    expect(policies).toContain("bedrock-mantle:CountTokens");
-    expect(policies).toContain("project/default");
-    expect(policies).not.toContain("nova-2-lite");
-    expect(policies).not.toContain("gpt-oss");
-    expect(policies).not.toContain("glm-4.7");
+    expect(policies).not.toContain("bedrock-mantle:CountTokens");
+    expect(policies).not.toContain('"bedrock:CountTokens"');
+    expect(policies).toContain("nova-2-lite");
+    expect(policies).toContain("gpt-oss");
+    expect(policies).toContain("glm-4.7");
   });
 
   it("不正な月額上限をsynth前に拒否する", () => {
@@ -152,7 +227,7 @@ describe("WorkmateCostControlStack", () => {
   });
 
   it("Runtime実行ロールへMemory暗号化キーの利用権限を付ける", () => {
-    const value = template({ cognitoDomainPrefix: "cost-control-test" });
+    const value = template({ cognitoDomainPrefix: "workmate12-test" });
     value.hasResourceProperties("AWS::IAM::Policy", Match.objectLike({
       PolicyDocument: Match.objectLike({
         Statement: Match.arrayWith([
@@ -166,7 +241,7 @@ describe("WorkmateCostControlStack", () => {
   });
 
   it("既存Knowledge BaseだけをRuntimeへ接続する", () => {
-    const value = template({ cognitoDomainPrefix: "cost-control-test" });
+    const value = template({ cognitoDomainPrefix: "workmate12-test" });
     value.hasParameter("KnowledgeBaseId", {
       Type: "String",
       AllowedPattern: "[0-9A-Z]{10}",
@@ -185,11 +260,11 @@ describe("WorkmateCostControlStack", () => {
 
   it("Entraオプション有効時だけOIDC IdPを追加する", () => {
     const value = template({
-      cognitoDomainPrefix: "cost-control-entra-test",
+      cognitoDomainPrefix: "workmate12-entra-test",
       entraEnabled: true,
       entraTenantId: "00000000-0000-0000-0000-000000000001",
       entraClientId: "00000000-0000-0000-0000-000000000002",
-      entraClientSecretName: "cost-control/entra/client-secret",
+      entraClientSecretName: "workmate12/entra/client-secret",
     });
     value.resourceCountIs("AWS::Cognito::UserPoolIdentityProvider", 1);
     value.hasResourceProperties("AWS::Cognito::UserPoolIdentityProvider", {
@@ -208,12 +283,12 @@ describe("WorkmateCostControlStack", () => {
   });
 
   it("Entraを無効にしたままEntra表示を指定すればsynthを拒否する", () => {
-    expect(() => template({ cognitoDomainPrefix: "cost-control-test", loginMethods: "entra" }))
+    expect(() => template({ cognitoDomainPrefix: "workmate12-test", loginMethods: "entra" }))
       .toThrow("requires entraEnabled=true");
   });
 
   it("未知のloginMethodsはsynthを拒否する", () => {
-    expect(() => template({ cognitoDomainPrefix: "cost-control-test", loginMethods: "saml" }))
+    expect(() => template({ cognitoDomainPrefix: "workmate12-test", loginMethods: "saml" }))
       .toThrow("loginMethods must be one of");
   });
 
@@ -245,7 +320,7 @@ describe("WorkmateCostControlStack", () => {
 
 describe("ログ出力", () => {
   it("既定で保持期間3日のロググループとAPPLICATION_LOGS/USAGE_LOGSの配信を作る", () => {
-    const value = template({ cognitoDomainPrefix: "cost-control-test" });
+    const value = template({ cognitoDomainPrefix: "workmate12-test" });
     value.hasResourceProperties("AWS::Logs::LogGroup", Match.objectLike({ RetentionInDays: 3 }));
     value.resourceCountIs("AWS::Logs::Delivery", 2);
     const sources = value.findResources("AWS::Logs::DeliverySource");
@@ -254,7 +329,7 @@ describe("ログ出力", () => {
   });
 
   it("実行ロールへCloudWatch Logsの書き込み権限を付ける", () => {
-    const value = template({ cognitoDomainPrefix: "cost-control-test" });
+    const value = template({ cognitoDomainPrefix: "workmate12-test" });
     value.hasResourceProperties("AWS::IAM::Policy", Match.objectLike({
       PolicyDocument: Match.objectLike({
         Statement: Match.arrayWith([
@@ -265,7 +340,7 @@ describe("ログ出力", () => {
   });
 
   it("logRetentionDaysで保持期間を変更できる", () => {
-    template({ cognitoDomainPrefix: "cost-control-test", logRetentionDays: 30 })
+    template({ cognitoDomainPrefix: "workmate12-test", logRetentionDays: 30 })
       .hasResourceProperties("AWS::Logs::LogGroup", Match.objectLike({ RetentionInDays: 30 }));
   });
 
@@ -276,21 +351,21 @@ describe("ログ出力", () => {
   });
 
   it("種別ごとのログをデプロイ時に無効化できる", () => {
-    template({ cognitoDomainPrefix: "cost-control-test", runtimeLogModel: "off", runtimeLogTool: "off" })
+    template({ cognitoDomainPrefix: "workmate12-test", runtimeLogModel: "off", runtimeLogTool: "off" })
       .hasResourceProperties("AWS::BedrockAgentCore::Runtime", Match.objectLike({
         EnvironmentVariables: Match.objectLike({ RUNTIME_LOG_MODEL: "off", RUNTIME_LOG_TOOL: "off" }),
       }));
   });
 
   it("未指定の種別は環境変数を設定せず既定の有効のままにする", () => {
-    const runtimes = template({ cognitoDomainPrefix: "cost-control-test" }).findResources("AWS::BedrockAgentCore::Runtime");
+    const runtimes = template({ cognitoDomainPrefix: "workmate12-test" }).findResources("AWS::BedrockAgentCore::Runtime");
     const environment = Object.values(runtimes)[0]?.Properties.EnvironmentVariables ?? {};
     expect(environment).not.toHaveProperty("RUNTIME_LOG_MODEL");
     expect(environment).not.toHaveProperty("RUNTIME_LOG_TOOL");
   });
 
   it("on/off以外の指定は拒否する", () => {
-    expect(() => template({ cognitoDomainPrefix: "cost-control-test", runtimeLogModel: "maybe" })).toThrow("must be on or off");
+    expect(() => template({ cognitoDomainPrefix: "workmate12-test", runtimeLogModel: "maybe" })).toThrow("must be on or off");
   });
 });
 

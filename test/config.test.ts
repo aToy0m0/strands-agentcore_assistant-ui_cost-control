@@ -4,6 +4,7 @@ import { parseRuntimeConfig, runtimeInvocationUrl, type RuntimeConfig } from "..
 const runtimeConfig = {
   environment: "test",
   debug: false,
+  ui: { name: "Workmate" },
   auth: {
     region: "us-east-1",
     userPoolId: "us-east-1_example",
@@ -39,5 +40,10 @@ describe("parseRuntimeConfig", () => {
     delete withoutDebug.debug;
     expect(() => parseRuntimeConfig(withoutDebug)).toThrow("debug must be a boolean");
     expect(() => parseRuntimeConfig({ ...runtimeConfig, debug: "on" })).toThrow("debug must be a boolean");
+  });
+
+  it("UI名を必須とする", () => {
+    expect(parseRuntimeConfig(runtimeConfig).ui.name).toBe("Workmate");
+    expect(() => parseRuntimeConfig({ ...runtimeConfig, ui: { name: "" } })).toThrow("ui.name is required");
   });
 });

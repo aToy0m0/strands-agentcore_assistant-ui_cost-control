@@ -6,13 +6,11 @@ export const DEFAULT_RUNTIME_OPTIONS: RuntimeOptions = {
     model: DEFAULT_INFERENCE_SELECTION.model,
     reasoning: { enabled: true, effort: "medium" },
   },
-  verifiedAt: "2026-08-30T00:00:00.000Z",
-  pricingBasis: "us-east-1のGeo Cross-Regionオンデマンド標準料金（2026-08-30確認）",
   models: COST_CONTROLLED_MODEL_CATALOG.map((model) => ({
     id: model.key,
     label: model.label,
     provider: model.provider,
-    pricing: model.pricing,
+    costControl: model.tokenCounter.kind === "usage-only" ? "soft" : "hard",
     reasoning: model.reasoning,
   })),
 };

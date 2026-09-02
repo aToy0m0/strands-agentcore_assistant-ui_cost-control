@@ -1,6 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { CfnOutput, CfnParameter, Duration, Fn, RemovalPolicy, SecretValue, Stack, type StackProps } from "aws-cdk-lib";
+import { CfnOutput, CfnParameter, Duration, Fn, RemovalPolicy, SecretValue, Stack, Tags, type StackProps } from "aws-cdk-lib";
 import { Certificate } from "aws-cdk-lib/aws-certificatemanager";
 import {
   CfnRuntime,
@@ -30,15 +30,20 @@ import {
 import { Effect, PolicyStatement, Role, ServicePrincipal } from "aws-cdk-lib/aws-iam";
 import { Key } from "aws-cdk-lib/aws-kms";
 import { Code, Function as LambdaFunction, Runtime } from "aws-cdk-lib/aws-lambda";
+import { Rule, Schedule } from "aws-cdk-lib/aws-events";
+import { LambdaFunction as LambdaTarget } from "aws-cdk-lib/aws-events-targets";
+import { TriggerFunction } from "aws-cdk-lib/triggers";
 import { BlockPublicAccess, Bucket, BucketEncryption } from "aws-cdk-lib/aws-s3";
 import { BucketDeployment, Source } from "aws-cdk-lib/aws-s3-deployment";
 import { LogGroup, RetentionDays } from "aws-cdk-lib/aws-logs";
 import { LoggingDestination, LogType, configureLoggingDelivery } from "aws-cdk-lib/aws-bedrockagentcore";
 import { AttributeType, BillingMode, Table } from "aws-cdk-lib/aws-dynamodb";
+import { AwsCustomResource, AwsCustomResourcePolicy, PhysicalResourceId } from "aws-cdk-lib/custom-resources";
 import type { Construct } from "constructs";
 import { COST_CONTROLLED_MODEL_CATALOG } from "../shared/model-catalog.js";
 import { resolveLoginMethods, showsCognitoLogin, showsEntraLogin } from "../shared/login-methods.js";
 import { defaultUserLimitProfile, parseUserLimitProfiles } from "../shared/user-limit-profiles.js";
+import { INITIAL_MODEL_PRICING } from "../shared/initial-model-pricing.js";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const entraProviderName = "MicrosoftEntraID";
@@ -103,6 +108,22 @@ export function decodeBase64UrlContext(configured: unknown, name: string): strin
   return decoded;
 }
 
+export function resolveResourceNamePrefix(configured: unknown): string {
+  if (typeof configured !== "string" || !/^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/u.test(configured)) {
+    throw new Error("resourceNamePrefix must be 1-32 lowercase letters, numbers, or hyphens and cannot end with a hyphen");
+  }
+  return configured;
+}
+
+export function resolveUiName(configured: unknown): string {
+  if (typeof configured !== "string") throw new Error("uiName is required");
+  const value = configured.trim();
+  if (!value || value.length > 64 || Array.from(value).some((character) => character.codePointAt(0)! < 32 || character.codePointAt(0) === 127)) {
+    throw new Error("uiName must be 1-64 visible characters");
+  }
+  return value;
+}
+
 function contextString(scope: Construct, name: string): string {
   const value = scope.node.tryGetContext(name);
   if (typeof value !== "string" || !value.trim()) throw new Error(`CDK context ${name} is required`);
@@ -116,11 +137,15 @@ export class WorkmateCostControlStack extends Stack {
     const entraEnabledValue = this.node.tryGetContext("entraEnabled");
     const entraEnabled = entraEnabledValue === true || entraEnabledValue === "true";
     const loginMethods = resolveLoginMethods(this.node.tryGetContext("loginMethods"), entraEnabled);
+    const resourceNamePrefix = resolveResourceNamePrefix(this.node.tryGetContext("resourceNamePrefix"));
+    const runtimeNamePrefix = resourceNamePrefix.replace(/-/gu, "_");
+    const uiName = resolveUiName(this.node.tryGetContext("uiName"));
+    Tags.of(this).add("CostGroup", resourceNamePrefix);
     const configuredDomainPrefix = this.node.tryGetContext("cognitoDomainPrefix");
     if (configuredDomainPrefix !== undefined && (typeof configuredDomainPrefix !== "string" || !/^[a-z0-9-]{1,63}$/.test(configuredDomainPrefix))) {
       throw new Error("cognitoDomainPrefix must contain only lowercase letters, numbers, and hyphens");
     }
-    const domainPrefix = typeof configuredDomainPrefix === "string" ? configuredDomainPrefix : `cost-control-${this.account}`;
+    const domainPrefix = typeof configuredDomainPrefix === "string" ? configuredDomainPrefix : `${resourceNamePrefix.replace(/-/gu, "")}-${this.account}`;
     const logRetention = resolveLogRetention(this.node.tryGetContext("logRetentionDays"));
     const runtimeLogEnvironment = runtimeLogSettings(this);
     const webDebugMode = resolveWebDebugMode(this.node.tryGetContext("webDebugMode"));
@@ -300,13 +325,102 @@ export class WorkmateCostControlStack extends Stack {
       removalPolicy: RemovalPolicy.DESTROY,
     });
     budgetTable.grantReadWriteData(runtimeRole);
+    const pricingTable = new Table(this, "ModelPricingCatalog", {
+      partitionKey: { name: "modelId", type: AttributeType.STRING },
+      billingMode: BillingMode.PAY_PER_REQUEST,
+      pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
+      removalPolicy: RemovalPolicy.DESTROY,
+    });
+    pricingTable.grantReadData(runtimeRole);
+    const pricingHistoryTable = new Table(this, "ModelPricingHistory", {
+      partitionKey: { name: "modelId", type: AttributeType.STRING },
+      sortKey: { name: "verificationId", type: AttributeType.STRING },
+      billingMode: BillingMode.PAY_PER_REQUEST,
+      pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
+      timeToLiveAttribute: "expiresAt",
+      removalPolicy: RemovalPolicy.DESTROY,
+    });
+    const pricingSeeds: AwsCustomResource[] = [];
+    for (const pricing of INITIAL_MODEL_PRICING) {
+      const seed = new AwsCustomResource(this, `SeedPricing${pricing.modelId.replace(/[^A-Za-z0-9]/gu, "")}`, {
+        installLatestAwsSdk: false,
+        onCreate: {
+          service: "DynamoDB",
+          action: "putItem",
+          parameters: {
+            TableName: pricingTable.tableName,
+            Item: {
+              modelId: { S: pricing.modelId },
+              status: { S: pricing.status },
+              currency: { S: pricing.currency },
+              sourceRegion: { S: pricing.sourceRegion },
+              routing: { S: pricing.routing },
+              serviceTier: { S: pricing.serviceTier },
+              inputNanoUsdPerMillionTokens: { N: pricing.inputNanoUsdPerMillionTokens },
+              outputNanoUsdPerMillionTokens: { N: pricing.outputNanoUsdPerMillionTokens },
+              verifiedAt: { S: pricing.verifiedAt },
+              verifiedUntil: { S: pricing.verifiedUntil },
+              version: { S: pricing.version },
+              sources: { L: pricing.sources.map((source) => ({ S: source })) },
+              priceListServiceCode: { S: pricing.priceList.serviceCode },
+              priceListProductAttributeName: { S: pricing.priceList.productAttributeName },
+              priceListProductAttributeValue: { S: pricing.priceList.productAttributeValue },
+              priceListInputUsageType: { S: pricing.priceList.inputUsageType },
+              priceListOutputUsageType: { S: pricing.priceList.outputUsageType },
+              ...(pricing.productId ? { productId: { S: pricing.productId } } : {}),
+            },
+            ConditionExpression: "attribute_not_exists(modelId)",
+          },
+          physicalResourceId: PhysicalResourceId.of(`pricing-${pricing.modelId}`),
+        },
+        policy: AwsCustomResourcePolicy.fromSdkCalls({ resources: [pricingTable.tableArn] }),
+      });
+      seed.node.addDependency(pricingTable);
+      pricingSeeds.push(seed);
+    }
+    const pricingVerifierLogGroup = new LogGroup(this, "PricingVerifierLogs", {
+      retention: logRetention,
+      removalPolicy: RemovalPolicy.DESTROY,
+    });
+    const pricingVerifier = new TriggerFunction(this, "PricingVerifier", {
+      description: "Verifies the model price catalog against the official AWS Price List API",
+      runtime: Runtime.PYTHON_3_13,
+      handler: "index.lambda_handler",
+      code: Code.fromAsset(path.join(root, "..", "pricing-verifier"), { exclude: ["test_*.py", "__pycache__"] }),
+      timeout: Duration.minutes(2),
+      memorySize: 256,
+      logGroup: pricingVerifierLogGroup,
+      environment: {
+        PRICING_TABLE_NAME: pricingTable.tableName,
+        PRICING_HISTORY_TABLE_NAME: pricingHistoryTable.tableName,
+        PRICE_VALIDITY_HOURS: "48",
+      },
+    });
+    pricingVerifier.executeAfter(...pricingSeeds);
+    pricingTable.grantReadWriteData(pricingVerifier);
+    pricingHistoryTable.grantWriteData(pricingVerifier);
+    pricingVerifier.addToRolePolicy(new PolicyStatement({
+      effect: Effect.ALLOW,
+      actions: ["dynamodb:TransactWriteItems"],
+      resources: [pricingTable.tableArn, pricingHistoryTable.tableArn],
+    }));
+    pricingVerifier.addToRolePolicy(new PolicyStatement({
+      effect: Effect.ALLOW,
+      actions: ["pricing:GetProducts"],
+      resources: ["*"],
+    }));
+    const pricingVerificationSchedule = new Rule(this, "PricingVerificationSchedule", {
+      description: "Verifies all active model prices daily at 00:00 JST (15:00 UTC)",
+      schedule: Schedule.cron({ minute: "0", hour: "15" }),
+    });
+    pricingVerificationSchedule.addTarget(new LambdaTarget(pricingVerifier, { retryAttempts: 2 }));
     const gatewayToolLogGroup = new LogGroup(this, "GatewayToolLogs", {
       retention: logRetention,
       removalPolicy: RemovalPolicy.DESTROY,
     });
     const gatewayTool = new LambdaFunction(this, "GatewayTool", {
-      functionName: "cost-control-support-directory-tool",
-      description: "Read-only support contact lookup for the Workmate AgentCore Gateway",
+      functionName: `${resourceNamePrefix}-support-directory-tool`,
+      description: `Read-only support contact lookup for the ${uiName} AgentCore Gateway`,
       runtime: Runtime.NODEJS_22_X,
       handler: "index.handler",
       code: Code.fromAsset(path.join(root, "..", "gateway-tool"), { exclude: ["*.node-test.mjs"] }),
@@ -318,19 +432,19 @@ export class WorkmateCostControlStack extends Stack {
       description: "Least-privilege execution role for the Workmate AgentCore Gateway",
       assumedBy: new ServicePrincipal("bedrock-agentcore.amazonaws.com").withConditions({
         StringEquals: { "aws:SourceAccount": this.account },
-        ArnLike: { "aws:SourceArn": `arn:${this.partition}:bedrock-agentcore:${this.region}:${this.account}:gateway/cost-control-tools*` },
+        ArnLike: { "aws:SourceArn": `arn:${this.partition}:bedrock-agentcore:${this.region}:${this.account}:gateway/${resourceNamePrefix}-tools*` },
       }),
     });
     const toolGateway = new Gateway(this, "ToolGateway", {
-      gatewayName: "cost-control-tools",
-      description: "Workmate MCP gateway for authenticated Lambda tools",
+      gatewayName: `${resourceNamePrefix}-tools`,
+      description: `${uiName} MCP gateway for authenticated Lambda tools`,
       authorizerConfiguration: GatewayAuthorizer.usingCognito({
         userPool,
         allowedClients: [userPoolClient],
       }),
       protocolConfiguration: GatewayProtocol.mcp({
         supportedVersions: [MCPProtocolVersion.of("2025-11-25")],
-        instructions: "Use the available read-only Workmate business tools when their descriptions match the user request.",
+        instructions: `Use the available read-only ${uiName} business tools when their descriptions match the user request.`,
       }),
       role: gatewayRole,
     });
@@ -363,8 +477,8 @@ export class WorkmateCostControlStack extends Stack {
       }]),
     });
     const memoryKey = new Key(this, "MemoryKey", {
-      alias: "alias/cost-control-cost-control-memory",
-      description: "Encrypts Workmate AgentCore Memory",
+      alias: `alias/${resourceNamePrefix}-cost-control-memory`,
+      description: `Encrypts ${uiName} AgentCore Memory`,
       enableKeyRotation: true,
       removalPolicy: RemovalPolicy.DESTROY,
     });
@@ -409,16 +523,6 @@ export class WorkmateCostControlStack extends Stack {
     }));
     runtimeRole.addToPolicy(new PolicyStatement({
       effect: Effect.ALLOW,
-      actions: ["bedrock:CountTokens"],
-      resources: bedrockResources(COST_CONTROLLED_MODEL_CATALOG.filter((model) => model.tokenCounter.kind === "bedrock-runtime")),
-    }));
-    runtimeRole.addToPolicy(new PolicyStatement({
-      effect: Effect.ALLOW,
-      actions: ["bedrock-mantle:CountTokens"],
-      resources: [`arn:${this.partition}:bedrock-mantle:${this.region}:${this.account}:project/default`],
-    }));
-    runtimeRole.addToPolicy(new PolicyStatement({
-      effect: Effect.ALLOW,
       actions: ["bedrock:Retrieve"],
       resources: [`arn:${this.partition}:bedrock:${this.region}:${this.account}:knowledge-base/${knowledgeBaseId.valueAsString}`],
     }));
@@ -435,8 +539,8 @@ export class WorkmateCostControlStack extends Stack {
     }));
     artifactBucket.grantRead(runtimeRole);
     const agentRuntime = new CfnRuntime(this, "AgentRuntime", {
-      agentRuntimeName: "strands_agentcore_cost_control",
-      description: "Cost Control sample browser-direct AG-UI CodeZip runtime with LLM budget control",
+      agentRuntimeName: `${runtimeNamePrefix}_cost_control`,
+      description: `${uiName} browser-direct AG-UI CodeZip runtime with LLM budget control`,
       agentRuntimeArtifact: { codeConfiguration: { code: { s3: { bucket: artifactBucket.bucketName, prefix: runtimeObjectKey } }, runtime: "NODE_22", entryPoint: ["dist/app.js"] } },
       authorizerConfiguration: {
         customJwtAuthorizer: {
@@ -455,14 +559,16 @@ export class WorkmateCostControlStack extends Stack {
         KNOWLEDGE_BASE_ID: knowledgeBaseId.valueAsString,
         MEMORY_ID: memory.memoryId,
         BUDGET_TABLE_NAME: budgetTable.tableName,
+        PRICING_TABLE_NAME: pricingTable.tableName,
         AWS_ACCOUNT_ID: this.account,
-        BUDGET_PROJECT_ID: "cost-control",
+        BUDGET_PROJECT_ID: resourceNamePrefix,
         ACCOUNT_MONTHLY_BUDGET_NANO_USD: accountBudgetNanoUsd,
         PROJECT_MONTHLY_BUDGET_NANO_USD: projectBudgetNanoUsd,
         USER_LIMIT_PROFILES_JSON: userLimitProfilesJson,
         ...runtimeLogEnvironment,
       },
     });
+    pricingVerifier.executeBefore(agentRuntime);
     agentRuntime.node.addDependency(runtimeUpload);
 
     // 保持期間を制御するため、サービス任せにせずこちらでロググループを持つ。
@@ -491,6 +597,7 @@ export class WorkmateCostControlStack extends Stack {
             entraProviderName: entraEnabled ? entraProviderName : null,
             loginMethods,
           },
+          ui: { name: uiName },
           agent: { runtimeArn: agentRuntime.attrAgentRuntimeArn, qualifier: "DEFAULT" },
         }),
       ],
@@ -501,6 +608,8 @@ export class WorkmateCostControlStack extends Stack {
     webDeployment.node.addDependency(agentRuntime);
 
     new CfnOutput(this, "ApplicationUrl", { value: applicationUrl });
+    new CfnOutput(this, "ResourceNamePrefix", { value: resourceNamePrefix });
+    new CfnOutput(this, "UiName", { value: uiName });
     new CfnOutput(this, "CloudFrontDomainName", { value: distribution.distributionDomainName });
     new CfnOutput(this, "UserPoolId", { value: userPool.userPoolId });
     new CfnOutput(this, "UserPoolClientId", { value: userPoolClient.userPoolClientId });
@@ -513,6 +622,9 @@ export class WorkmateCostControlStack extends Stack {
     new CfnOutput(this, "RuntimeArtifactsBucketName", { value: artifactBucket.bucketName });
     new CfnOutput(this, "RuntimeLogGroupName", { value: runtimeLogGroup.logGroupName });
     new CfnOutput(this, "BudgetLedgerTableName", { value: budgetTable.tableName });
+    new CfnOutput(this, "ModelPricingCatalogTableName", { value: pricingTable.tableName });
+    new CfnOutput(this, "ModelPricingHistoryTableName", { value: pricingHistoryTable.tableName });
+    new CfnOutput(this, "PricingVerifierFunctionName", { value: pricingVerifier.functionName });
     new CfnOutput(this, "AccountMonthlyBudgetUsd", { value: this.node.tryGetContext("accountMonthlyBudgetUsd")?.toString() ?? "100" });
     new CfnOutput(this, "ProjectMonthlyBudgetUsd", { value: this.node.tryGetContext("projectMonthlyBudgetUsd")?.toString() ?? "60" });
     new CfnOutput(this, "UserLimitProfileIds", { value: userLimitProfiles.map((profile) => profile.id).join(",") });

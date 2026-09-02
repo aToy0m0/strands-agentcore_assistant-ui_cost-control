@@ -29,7 +29,7 @@ UIはCognitoで認証し、ブラウザからAgentCore Runtimeへ直接AG-UIリ�
 | 入力 | 音声入力 | Web Speech APIによる日本語の連続音声入力 |
 | 出力 | Markdown | GFM対応Markdown、コード、リンクなどを表示 |
 | 出力 | 音声読み上げ | Web Speech APIの読み上げAdapterを提供 |
-| 推論 | モデル選択 | 厳密な事前token計数に対応する3モデルから実行モデルを選択 |
+| 推論 | モデル選択 | 8モデルから実行モデルを選択し、ハード／ソフト制限を表示 |
 | 推論 | Reasoning設定 | ON/OFFと対応モデルのLow・Medium・Highを選択 |
 | 推論 | 料金表示 | モデルごとの100万トークン単価を選択UIに表示 |
 | 表示 | レスポンシブUI | デスクトップの開閉サイドバーとモバイルドロワー |
