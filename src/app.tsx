@@ -20,7 +20,7 @@ export function App() {
     void (async () => {
       try {
         const config = await loadRuntimeConfig();
-        document.title = `${config.ui.name} AG-UI`;
+        document.title = config.ui.name;
         setDebugEnabled(config.debug);
         removeDebugHandlers = installBrowserDebugHandlers();
         debugLog("app.config.loaded", config);

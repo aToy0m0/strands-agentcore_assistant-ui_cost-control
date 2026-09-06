@@ -64,8 +64,8 @@ export function googleModelOptions(selection: InferenceSelection, apiKey: string
     params: {
       maxOutputTokens: model.maxOutputTokens,
       thinkingConfig: selection.reasoning.enabled
-        ? { thinkingLevel: requiredEffort(selection).toUpperCase() }
-        : { thinkingLevel: "MINIMAL" },
+        ? { thinkingLevel: requiredEffort(selection).toUpperCase(), includeThoughts: true }
+        : { thinkingLevel: "MINIMAL", includeThoughts: false },
     },
   };
 }

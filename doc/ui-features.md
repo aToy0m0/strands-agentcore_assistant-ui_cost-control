@@ -66,7 +66,7 @@ Runtime呼び出しでは次のヘッダーを付けます。
 
 ### Reasoning
 
-AG-UIのReasoningイベントを回答本文と分けて表示します。モデルが思考内容を公開しない場合は、Runtimeから「内容を考えています」「回答を作成しています」といった状態だけを受け取ります。
+AG-UIのReasoningイベントを回答本文と分けて表示します。GeminiはReasoningがONの場合にGoogle APIから返された思考要約を表示します。モデルが思考内容を公開しない場合、または思考要約を返さない設定では、Runtimeから「内容を考えています」「回答を作成しています」といった状態だけを受け取ります。
 
 ### ツール
 
@@ -100,6 +100,7 @@ AG-UIのReasoningイベントを回答本文と分けて表示します。モデ
 - 既定Reasoning: ON、Medium
 - 任意Reasoningモデル: ON/OFFを選択
 - 常時Reasoningモデル: UI上のOFFをRuntimeで最小Effortへ変換
+- Gemini: ONでは思考要約を表示し、OFFでは`MINIMAL`へ下げて要約を非表示
 - Effort非対応モデル: ON/OFFだけを表示
 
 実行中はモデル設定ボタンを無効化し、同じ実行の途中で設定が変わらないようにします。

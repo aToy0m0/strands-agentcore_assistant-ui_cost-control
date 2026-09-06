@@ -70,9 +70,11 @@ Browser
 | GPT-5.6 Luna | OpenAI | ON/OFF、Low・Medium・High | SDK概算（Bedrock CountTokens非対応） | ソフト |
 | GLM 4.7 Flash | Z.AI | ON/OFF | Bedrock CountTokens | ソフト |
 | GLM 4.7 | Z.AI | ON/OFF | Bedrock CountTokens | ソフト |
-| Gemini 3.5 Flash | Google | ON/OFF、Low・Medium・High | Google countTokens | ソフト |
+| Gemini 3.5 Flash | Google | Low・Medium・High。OFF時はMINIMAL | Google countTokens | ソフト |
 
 Runtimeは未知のモデル、未対応のEffort、余分な推論設定フィールドをエラーにします。BedrockモデルはBedrock Runtime `CountTokens`、GeminiはGoogle `countTokens`を優先します。標準APIを利用できない場合はStrands SDKの概算へ切り替え、その事実を警告ログへ残します。自作トークナイザーや最大出力費用の予約は使用しません。
+
+GeminiでReasoningをONにすると`thinkingLevel`と`includeThoughts: true`をGoogle APIへ渡し、返却された思考要約をReasoningとして表示します。OFFはGeminiのthinkingを完全停止する指定ではなく、`MINIMAL`へ下げて思考要約をレスポンスへ含めない動作です。thinking tokenはGoogleの`totalTokenCount`に含まれるため、表示の有無にかかわらず応答usageから費用へ計上します。
 
 GPT-5.6 Lunaは入力コンテキストが272,000トークン以下か、それを超えて1,000,000トークン以下かで公式単価が変わるため、事前計数結果から価格段階を選ぶ。選択した段階の上限は費用ログの`contextTierMaxInputTokens`へ保存する。
 

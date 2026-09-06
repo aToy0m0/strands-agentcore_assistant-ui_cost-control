@@ -90,7 +90,14 @@ describe("googleModelOptions", () => {
         modelId: "gemini-3.5-flash",
         maxTokens: 8_192,
         useNativeTokenCount: true,
-        params: { maxOutputTokens: 8_192, thinkingConfig: { thinkingLevel: "MEDIUM" } },
+        params: { maxOutputTokens: 8_192, thinkingConfig: { thinkingLevel: "MEDIUM", includeThoughts: true } },
+      });
+  });
+
+  it("Reasoning無効時はGeminiの思考要約を返さずthinking levelを最小化する", () => {
+    expect(googleModelOptions({ model: "gemini-3-5-flash", reasoning: { enabled: false } }, "test-key", modelId("gemini-3-5-flash")))
+      .toMatchObject({
+        params: { thinkingConfig: { thinkingLevel: "MINIMAL", includeThoughts: false } },
       });
   });
 });
