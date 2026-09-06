@@ -17,11 +17,14 @@ __pycache__/
 *.tsbuildinfo
 scripts/deploy-config.json
 
-# docは既定で除外し、公開対象の資料と構成図だけを明示的に管理する。
+# docは既定で除外し、公開対象の資料だけを明示的に管理する。
 doc/*
 !doc/deployment-guide.md
 !doc/deployment-context-options.md
+!doc/cost-control-design.md
+!doc/custom-domain-deployment.md
 !doc/model-access-prerequisites.md
+!doc/pricing-api-strategy.md
 !doc/resource-naming.md
 !doc/folder-structure.md
 !doc/runtime-features.md

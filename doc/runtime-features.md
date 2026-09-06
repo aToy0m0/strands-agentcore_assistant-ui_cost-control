@@ -61,15 +61,15 @@ Browser
 
 | 表示名 | プロバイダー | Reasoning | 入力token計数 | 制限方式 |
 |---|---|---|---|---|
-| Amazon Nova 2 Lite | Amazon | ON/OFF、Low・Medium・High | 応答usage | ソフト |
-| Claude Haiku 4.5 | Anthropic | ON/OFF、Low・Medium・High | 応答usage | ソフト |
-| Claude Sonnet 4.6 | Anthropic | ON/OFF、Low・Medium・High | 応答usage | ソフト |
-| Claude Sonnet 5 | Anthropic | 常時ON、Low・Medium・High | 応答usage | ソフト |
-| GPT-OSS 20B | OpenAI | 常時ON、Low・Medium・High | 応答usage | ソフト |
-| GPT-OSS 120B | OpenAI | 常時ON、Low・Medium・High | 応答usage | ソフト |
+| Amazon Nova 2 Lite | Amazon | ON/OFF、Low・Medium・High | Bedrock CountTokens | ソフト |
+| Claude Haiku 4.5 | Anthropic | ON/OFF、Low・Medium・High | Bedrock CountTokens | ソフト |
+| Claude Sonnet 4.6 | Anthropic | ON/OFF、Low・Medium・High | Bedrock CountTokens | ソフト |
+| Claude Sonnet 5 | Anthropic | 常時ON、Low・Medium・High | Bedrock CountTokens | ソフト |
+| GPT-OSS 20B | OpenAI | 常時ON、Low・Medium・High | Bedrock CountTokens | ソフト |
+| GPT-OSS 120B | OpenAI | 常時ON、Low・Medium・High | Bedrock CountTokens | ソフト |
 | GPT-5.6 Luna | OpenAI | ON/OFF、Low・Medium・High | SDK概算（Bedrock CountTokens非対応） | ソフト |
-| GLM 4.7 Flash | Z.AI | ON/OFF | 応答usage | ソフト |
-| GLM 4.7 | Z.AI | ON/OFF | 応答usage | ソフト |
+| GLM 4.7 Flash | Z.AI | ON/OFF | Bedrock CountTokens | ソフト |
+| GLM 4.7 | Z.AI | ON/OFF | Bedrock CountTokens | ソフト |
 | Gemini 3.5 Flash | Google | ON/OFF、Low・Medium・High | Google countTokens | ソフト |
 
 Runtimeは未知のモデル、未対応のEffort、余分な推論設定フィールドをエラーにします。BedrockモデルはBedrock Runtime `CountTokens`、GeminiはGoogle `countTokens`を優先します。標準APIを利用できない場合はStrands SDKの概算へ切り替え、その事実を警告ログへ残します。自作トークナイザーや最大出力費用の予約は使用しません。
@@ -123,7 +123,7 @@ AgentCore MemoryのManaged Memory Strategyを利用します。
 
 Runtimeは`McpClient`でAgentCore Gatewayへ接続します。ブラウザから受け取ったCognitoトークンをGatewayへ渡すため、Gateway側でも同じ認証ユーザーとして検証されます。
 
-現在コード側カタログに登録済みのGatewayターゲットは`SupportDirectory___lookup_support_contact`です。configの`GatewayTargets`で有効化し、タイムアウト、メモリ、非機密の環境変数を指定できます。`sales`、`support`、`billing`の問い合わせ先と営業時間をLambdaから返し、Lambda側でも入力値を検証します。
+現在コード側カタログに登録済みのGatewayターゲットは`SupportDirectory___lookup_support_contact`です。configの`gatewayTargets`で有効化し、タイムアウト、メモリ、非機密の環境変数を指定できます。`sales`、`support`、`billing`の問い合わせ先と営業時間をLambdaから返し、Lambda側でも入力値を検証します。
 
 ## Human in the loop
 
@@ -144,12 +144,12 @@ request、model、toolはCDKコンテキストから個別に無効化できま�
 
 ## 対象外・制約
 
-- BFF、独自セッションDB、RDSは使用しません。DynamoDBはLLM費用台帳とモデル価格マスタに使用します。
+- BFF、独自セッションDB、RDSは使用しません。DynamoDBはLLM費用台帳に使用し、モデル価格表はVersioning付きS3に保持します。
 - プロジェクト単位のMemory分離は実装していません。
 - チャット名、ピン留め、アーカイブ、プロジェクト、フィードバックはRuntimeへ保存しません。
 - 添付ファイルの内容をRuntimeで永続保存しません。
 - Human in the loopの中断状態は永続化しません。
-- Gatewayツールの新規種類は自動検出せず、ソース、スキーマ、IAMをコード側カタログでレビューしてから`GatewayTargets`で選択します。
+- Gatewayツールの新規種類は自動検出せず、ソース、スキーマ、IAMをコード側カタログでレビューしてから`gatewayTargets`で選択します。
 
 ## 主な実装ファイル
 

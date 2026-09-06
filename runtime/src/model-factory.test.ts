@@ -1,12 +1,13 @@
 import { Message, TextBlock } from "@strands-agents/sdk";
 import { describe, expect, it, vi } from "vitest";
-import { BudgetControlledBedrockModel, bedrockModelOptions, googleModelOptions, usageStatusWithoutUsage } from "./model-factory.js";
+import { BudgetControlledBedrockModel, bedrockModelOptions, googleModelOptions, pricingRoutingFor, usageStatusWithoutUsage } from "./model-factory.js";
 import { BudgetExceededError, type DynamoBudgetLedger } from "./budget-ledger.js";
 import { nanoUsdFromUsd } from "./cost.js";
 import { modelByKey, parseInferenceSelection } from "../../shared/model-catalog.js";
 import type { PricingRouting, PricingSnapshot, S3ModelPricingCatalog } from "./pricing-catalog.js";
 
 const region = "us-east-1";
+const modelId = (key: string) => modelByKey(key).modelId;
 
 function pricingCatalog(modelId: string, rate = { input: "0.3", output: "2.5" }) {
   const snapshot: PricingSnapshot = {
@@ -33,34 +34,34 @@ it.each(["nova-2-lite", "claude-haiku-4-5", "claude-sonnet-4-6", "claude-sonnet-
 
 describe("bedrockModelOptions", () => {
   it("enables Nova reasoning with the selected effort", () => {
-    expect(bedrockModelOptions(region, { model: "nova-2-lite", reasoning: { enabled: true, effort: "medium" } })).toMatchObject({
+    expect(bedrockModelOptions(region, { model: "nova-2-lite", reasoning: { enabled: true, effort: "medium" } }, modelId("nova-2-lite"))).toMatchObject({
       modelId: "us.amazon.nova-2-lite-v1:0",
       additionalRequestFields: { reasoningConfig: { type: "enabled", maxReasoningEffort: "medium" } },
     });
   });
 
   it("disables Nova reasoning explicitly", () => {
-    expect(bedrockModelOptions(region, { model: "nova-2-lite", reasoning: { enabled: false } })).toMatchObject({
+    expect(bedrockModelOptions(region, { model: "nova-2-lite", reasoning: { enabled: false } }, modelId("nova-2-lite"))).toMatchObject({
       additionalRequestFields: { reasoningConfig: { type: "disabled" } },
     });
   });
 
   it("maps Claude budget and adaptive reasoning", () => {
-    expect(bedrockModelOptions(region, { model: "claude-haiku-4-5", reasoning: { enabled: true, effort: "low" } }).additionalRequestFields)
+    expect(bedrockModelOptions(region, { model: "claude-haiku-4-5", reasoning: { enabled: true, effort: "low" } }, modelId("claude-haiku-4-5")).additionalRequestFields)
       .toEqual({ thinking: { type: "enabled", budget_tokens: 1_024 } });
-    expect(bedrockModelOptions(region, { model: "claude-sonnet-4-6", reasoning: { enabled: true, effort: "high" } }).additionalRequestFields)
+    expect(bedrockModelOptions(region, { model: "claude-sonnet-4-6", reasoning: { enabled: true, effort: "high" } }, modelId("claude-sonnet-4-6")).additionalRequestFields)
       .toEqual({ thinking: { type: "adaptive" }, output_config: { effort: "high" } });
   });
 
   it("maps always-on Claude and GPT-OSS effort", () => {
-    expect(bedrockModelOptions(region, { model: "claude-sonnet-5", reasoning: { enabled: true, effort: "medium" } }).additionalRequestFields)
+    expect(bedrockModelOptions(region, { model: "claude-sonnet-5", reasoning: { enabled: true, effort: "medium" } }, modelId("claude-sonnet-5")).additionalRequestFields)
       .toEqual({ thinking: { type: "adaptive" }, output_config: { effort: "medium" } });
-    expect(bedrockModelOptions(region, { model: "gpt-oss-120b", reasoning: { enabled: true, effort: "high" } }).additionalRequestFields)
+    expect(bedrockModelOptions(region, { model: "gpt-oss-120b", reasoning: { enabled: true, effort: "high" } }, modelId("gpt-oss-120b")).additionalRequestFields)
       .toEqual({ reasoning_effort: "high" });
   });
 
   it("GPT-5.6 LunaへGeo推論IDとreasoning effortを設定する", () => {
-    expect(bedrockModelOptions(region, { model: "gpt-5-6-luna", reasoning: { enabled: true, effort: "medium" } })).toMatchObject({
+    expect(bedrockModelOptions(region, { model: "gpt-5-6-luna", reasoning: { enabled: true, effort: "medium" } }, modelId("gpt-5-6-luna"))).toMatchObject({
       modelId: "us.openai.gpt-5.6-luna",
       additionalRequestFields: { reasoning_effort: "medium" },
       useNativeTokenCount: true,
@@ -68,29 +69,38 @@ describe("bedrockModelOptions", () => {
   });
 
   it("maps the off preference to the minimum effort for always-on models", () => {
-    expect(bedrockModelOptions(region, { model: "claude-sonnet-5", reasoning: { enabled: false } }).additionalRequestFields)
+    expect(bedrockModelOptions(region, { model: "claude-sonnet-5", reasoning: { enabled: false } }, modelId("claude-sonnet-5")).additionalRequestFields)
       .toEqual({ thinking: { type: "adaptive" }, output_config: { effort: "low" } });
-    expect(bedrockModelOptions(region, { model: "gpt-oss-20b", reasoning: { enabled: false } }).additionalRequestFields)
+    expect(bedrockModelOptions(region, { model: "gpt-oss-20b", reasoning: { enabled: false } }, modelId("gpt-oss-20b")).additionalRequestFields)
       .toEqual({ reasoning_effort: "low" });
   });
 
   it("maps GLM thinking without an effort field", () => {
-    expect(bedrockModelOptions(region, { model: "glm-4-7-flash", reasoning: { enabled: true } }).additionalRequestFields)
+    expect(bedrockModelOptions(region, { model: "glm-4-7-flash", reasoning: { enabled: true } }, modelId("glm-4-7-flash")).additionalRequestFields)
       .toEqual({ thinking: { type: "enabled" } });
-    expect(bedrockModelOptions(region, { model: "glm-4-7", reasoning: { enabled: false } }).additionalRequestFields)
+    expect(bedrockModelOptions(region, { model: "glm-4-7", reasoning: { enabled: false } }, modelId("glm-4-7")).additionalRequestFields)
       .toEqual({ thinking: { type: "disabled" } });
   });
 });
 
 describe("googleModelOptions", () => {
   it("Gemini 3.5 Flashへnative CountTokensと出力上限を設定する", () => {
-    expect(googleModelOptions({ model: "gemini-3-5-flash", reasoning: { enabled: true, effort: "medium" } }, "test-key"))
+    expect(googleModelOptions({ model: "gemini-3-5-flash", reasoning: { enabled: true, effort: "medium" } }, "test-key", modelId("gemini-3-5-flash")))
       .toMatchObject({
         modelId: "gemini-3.5-flash",
         maxTokens: 8_192,
         useNativeTokenCount: true,
         params: { maxOutputTokens: 8_192, thinkingConfig: { thinkingLevel: "MEDIUM" } },
       });
+  });
+});
+
+describe("pricingRoutingFor", () => {
+  it("モデルIDのリージョン経路を区別する", () => {
+    expect(pricingRoutingFor("us.openai.gpt-5.6-luna", "openai")).toBe("geo-us");
+    expect(pricingRoutingFor("jp.amazon.nova-2-lite-v1:0", "amazon")).toBe("geo-jp");
+    expect(pricingRoutingFor("global.anthropic.claude-sonnet-5", "anthropic")).toBe("global");
+    expect(pricingRoutingFor("openai.gpt-oss-20b-1:0", "openai")).toBe("in-region");
   });
 });
 

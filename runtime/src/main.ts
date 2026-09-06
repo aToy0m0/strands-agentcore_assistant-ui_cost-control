@@ -11,7 +11,7 @@ import { MODEL_CATALOG, modelByKey, parseInferenceSelection } from "../../shared
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { S3Client } from "@aws-sdk/client-s3";
 import { DynamoBudgetLedger } from "./budget-ledger.js";
-import { parseEnabledModelKeys } from "../../shared/deployment-resources.js";
+import { parseEnabledModelKeys, parseModelIds } from "../../shared/deployment-resources.js";
 import { S3ModelPricingCatalog } from "./pricing-catalog.js";
 
 function required(name: string) {
@@ -51,7 +51,9 @@ function geminiApiKey(selection: ReturnType<typeof parseInferenceSelection>): Pr
   });
   return geminiApiKeyPromise;
 }
-const enabledModelKeys = new Set(parseEnabledModelKeys(required("ENABLED_MODEL_KEYS_JSON"), MODEL_CATALOG.map((model) => model.key)));
+const enabledModelKeyList = parseEnabledModelKeys(required("ENABLED_MODEL_KEYS_JSON"), MODEL_CATALOG.map((model) => model.key));
+const enabledModelKeys = new Set(enabledModelKeyList);
+const modelIds = parseModelIds(required("MODEL_IDS_JSON"), enabledModelKeyList, MODEL_CATALOG.map((model) => model.key));
 const interruptedAgents = new Map<string, {
   agent: Agent;
   actorId: string;
@@ -99,7 +101,7 @@ const app = createApp(async function* (input, cancelSignal, identity) {
   const agent = isResume
     ? pending?.agent
     : new Agent({
-      model: createConfiguredModel(region, selection, budgetLedger, pricingCatalog, await geminiApiKey(selection)),
+      model: createConfiguredModel(region, selection, budgetLedger, pricingCatalog, modelIds[selection.model], await geminiApiKey(selection)),
       systemPrompt: systemPromptWithMemory(personalMemory!),
       tools: [...utilityTools, ...knowledgeBaseSearchTools, gatewayClient!],
       messages: modelHistory!,

@@ -49,7 +49,7 @@ strands-agentcore_assistant-ui_cost-control/
 | `gateway-tool/` | AgentCore GatewayのLambdaターゲット | 問い合わせ先検索ツールとNode.js標準テスト |
 | `infrastructure/` | AWSリソースの唯一の定義 | CloudFront、S3、Cognito、Runtime、Memory、Gateway、Lambda、IAM、ログ |
 | `shared/` | 複数レイヤーで一致させる定義 | ログイン方式、モデルカタログ、S3価格カタログ初期値 |
-| `scripts/` | デプロイと構築後の管理作業 | JSON configによるCDKデプロイ、Cognitoユーザー、費用台帳の管理、Entra操作 |
+| `scripts/` | デプロイと構築後の管理作業 | JSON configによるCDKデプロイ、Cognitoユーザー、費用状況の確認、Entra操作 |
 | `test/` | ルート側の回帰テスト | UIロジック、設定、CDKテンプレートの検証 |
 | `public/` | 開発時の静的ファイル | ローカル用`runtime-config.json` |
 | `doc/` | 利用者・開発者向け資料 | デプロイ、セキュリティ、フォルダ構成 |
@@ -86,7 +86,7 @@ strands-agentcore_assistant-ui_cost-control/
 | `infrastructure/` | CDKアプリを起動し、全AWSリソースを定義する | `app.ts`、`stack.ts` |
 | `shared/` | UI、Runtime、CDKで同じ値を使う定義を一元化する | `login-methods.ts`、`model-catalog.ts`、`initial-model-pricing.ts` |
 | `pricing-verifier/` | 公式価格の自動照合Lambdaと単体テスト | `index.py`、`test_index.py` |
-| `scripts/` | デプロイ設定を渡し、Cognitoユーザーと費用状態を管理する | `deploy.mjs`、`manage-cognito-user.mjs`、`manage-budget.mjs` |
+| `scripts/` | デプロイ設定を渡し、Cognitoユーザーを管理して費用状況を確認する | `deploy.mjs`、`manage-cognito-user.mjs`、`show-cost-status.mjs` |
 | `scripts/entra/` | Microsoft Graph経由でEntra OIDCアプリを管理する | `New-EntraCognitoOidcApplication.ps1`、`Update-EntraCognitoOidcRedirectUri.ps1`など |
 | `test/` | UIロジック、共有定義、CDKテンプレートを回帰検証する | `config.test.ts`、`login-methods.test.ts`、`infrastructure.test.ts` |
 | `public/` | ローカル開発時にViteがそのまま配信する静的設定を置く | `runtime-config.json` |
@@ -135,7 +135,7 @@ infrastructure/stack.ts ── CDK deploy
   ├─ dist/をWeb用S3へ配置しCloudFrontから配信
   ├─ runtime-config.jsonを実AWSリソースの値で生成
   ├─ Runtime ZIPを専用S3へ配置してAgentCore Runtimeを更新
-  ├─ DynamoDB費用台帳、モデル価格マスタ、Cognito上限グループを作成
+  ├─ DynamoDB費用台帳とVersioning付きS3価格表を作成
   ├─ オプション有効時だけCloudFront独自ドメインとRoute 53 Alias Aを設定
   └─ Gateway Lambdaをgateway-tool/からパッケージ
 ```
@@ -173,8 +173,6 @@ infrastructure/stack.ts ── CDK deploy
 | Runtimeの実装機能 | `doc/runtime-features.md` |
 | UIの実装機能 | `doc/ui-features.md` |
 | セキュリティ制約 | `SECURITY.md`、`doc/security-notes.md` |
-| 設計理由・実装上の知見 | `doc/design-decisions-and-lessons.md` |
-| AWSume・AssumeRoleの運用知見 | `doc/awsume-assumerole-knowledge.md` |
 
 ## 配置ルール
 

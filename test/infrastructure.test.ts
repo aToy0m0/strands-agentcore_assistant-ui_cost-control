@@ -1,7 +1,7 @@
 import { App } from "aws-cdk-lib";
 import { Match, Template } from "aws-cdk-lib/assertions";
 import { describe, expect, it } from "vitest";
-import { decodeBase64UrlContext, AgentCoreCostControlStack, resolveLogRetention, resolveMonthlyBudgetNanoUsd, resolveWebDebugMode } from "../infrastructure/stack.js";
+import { decodeBase64UrlContext, AgentCoreCostControlStack, pricingCatalogForModelIds, resolveLogRetention, resolveMonthlyBudgetNanoUsd, resolveWebDebugMode } from "../infrastructure/stack.js";
 import { resolveResourceNames, resolveRuntimeDisplayName } from "../infrastructure/naming.js";
 import { RetentionDays } from "aws-cdk-lib/aws-logs";
 
@@ -34,6 +34,18 @@ function template(context: Record<string, unknown> = {}) {
       "nova-2-lite", "claude-haiku-4-5", "claude-sonnet-4-6", "claude-sonnet-5",
       "gpt-oss-20b", "gpt-oss-120b", "gpt-5-6-luna", "glm-4-7-flash", "glm-4-7",
     ]),
+    modelIds: JSON.stringify({
+      "nova-2-lite": "us.amazon.nova-2-lite-v1:0",
+      "claude-haiku-4-5": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+      "claude-sonnet-4-6": "us.anthropic.claude-sonnet-4-6",
+      "claude-sonnet-5": "us.anthropic.claude-sonnet-5",
+      "gpt-oss-20b": "openai.gpt-oss-20b-1:0",
+      "gpt-oss-120b": "openai.gpt-oss-120b-1:0",
+      "gpt-5-6-luna": "us.openai.gpt-5.6-luna",
+      "glm-4-7-flash": "zai.glm-4.7-flash",
+      "glm-4-7": "zai.glm-4.7",
+      "gemini-3-5-flash": "gemini-3.5-flash",
+    }),
     ...context,
   } });
   return Template.fromStack(new AgentCoreCostControlStack(app, "TestStack", {
@@ -256,6 +268,30 @@ describe("AgentCoreCostControlStack", () => {
     expect(policies).toContain("gpt-5.6-luna");
     expect(policies).toContain("project/default");
     expect(policies).toContain("glm-4.7");
+  });
+
+  it("configのモデルIDをRuntime、価格表、IAMへ一貫して反映する", () => {
+    const value = template({
+      enabledModelKeys: JSON.stringify(["claude-sonnet-5"]),
+      modelIds: JSON.stringify({ "claude-sonnet-5": "global.anthropic.claude-sonnet-5" }),
+    });
+    value.hasResourceProperties("AWS::BedrockAgentCore::Runtime", Match.objectLike({
+      EnvironmentVariables: Match.objectLike({
+        MODEL_IDS_JSON: JSON.stringify({ "claude-sonnet-5": "global.anthropic.claude-sonnet-5" }),
+      }),
+    }));
+    const templateJson = JSON.stringify(value.toJSON());
+    expect(templateJson).toContain("inference-profile/global.anthropic.claude-sonnet-5");
+    expect(templateJson).toContain(":bedrock:*::foundation-model/anthropic.claude-sonnet-5");
+    expect(pricingCatalogForModelIds({ "claude-sonnet-5": "global.anthropic.claude-sonnet-5" }).models)
+      .toHaveProperty("global.anthropic.claude-sonnet-5");
+  });
+
+  it("有効モデルのID欠落と未知モデルIDキーを拒否する", () => {
+    expect(() => template({ enabledModelKeys: JSON.stringify(["claude-sonnet-5"]), modelIds: "{}" }))
+      .toThrow("modelIds.claude-sonnet-5");
+    expect(() => template({ modelIds: JSON.stringify({ unknown: "example.model" }) }))
+      .toThrow("unknown model key");
   });
 
   it("Gemini有効時だけSecrets ManagerのAPIキー参照をRuntimeへ許可する", () => {

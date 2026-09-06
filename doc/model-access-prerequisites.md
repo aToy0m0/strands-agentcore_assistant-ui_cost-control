@@ -8,7 +8,7 @@
 
 ## 利用可否の確認
 
-モデルカタログの`availabilityModelId`を使い、デプロイ先リージョンで状態を確認する。
+`modelIds`のGeo／Global接頭辞を外した基盤モデルID、またはモデルカタログの`availabilityModelId`を使い、デプロイ先リージョンで状態を確認する。
 
 ```powershell
 aws bedrock get-foundation-model-availability `
@@ -25,6 +25,8 @@ aws bedrock get-foundation-model-availability `
 - `regionAvailability`が`AVAILABLE`
 
 いずれかが満たされない場合、そのモデルの呼び出しは失敗する。`enabledModelKeys`はアプリの表示・入力検証・IAM許可を揃えるallowlistであり、契約状態を自動判定する設定ではない。契約前に一覧へ出して疎通確認する運用も可能だが、選択時のエラーを許容することを明示する。
+
+4項目がすべて利用可能でも、推論時に「このアカウントでは利用できない」という拒否が返ることがある。特にGPT-5.6 Luna、GPT-5.6 Sol、Claude Sonnet 5のような新しいモデルでは、契約状態とは別のAWSアカウント単位の提供制限があり得る。CDKや`modelIds`の変更だけでは解除できないため、別モデルへ切り替えたうえでAWS SupportまたはAWS担当窓口へ確認する。
 
 ## 契約が未完了の場合
 
@@ -60,6 +62,8 @@ aws bedrock create-foundation-model-agreement `
 
 利用契約はモデル単位、リージョン単位で確認する。モデルを一覧へ表示できることやCDKデプロイが成功することは、推論を実行できる証明にはならない。
 
+GPT-5.6 SolはAWS上に存在するが、このサンプルのモデルカタログにはまだ組み込んでいない。利用可否確認用モデルIDは`openai.gpt-5.6-sol`、Bedrock Runtimeでの呼び出しIDはUSが`us.openai.gpt-5.6-sol`、東京からは`global.openai.gpt-5.6-sol`である。Lunaと同様に、契約状態が利用可能でもアカウント単位で推論を拒否される可能性がある。
+
 ## GPT-5.6 Luna
 
 - configキー: `gpt-5-6-luna`
@@ -69,4 +73,4 @@ aws bedrock create-foundation-model-agreement `
 - IAM: Geo推論プロファイル、配下の基盤モデル、アカウントの`default` projectをCDKで許可
 - 価格: 入力272,000トークン以下と、それを超えて1,000,000トークン以下の2段階を公式モデルカードに合わせて計算
 
-東京リージョンのBedrock RuntimeからLunaを使う場合、US Geo推論IDは利用できない。国内処理が必須でなければGlobal推論IDを使う別設定が必要になるため、現在の`gpt-5-6-luna`キーはUSリージョン用とする。
+東京リージョンのBedrock RuntimeからLunaを使う場合は、東京サンプルの`global.openai.gpt-5.6-luna`を使用する。この経路は東京から呼び出せるが、推論処理を国内に限定しない。

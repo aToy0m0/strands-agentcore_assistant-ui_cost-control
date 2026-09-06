@@ -1,7 +1,7 @@
 import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import type { NanoUsd, RateCard } from "./cost.js";
 
-export type PricingRouting = "geo-us" | "in-region" | "global";
+export type PricingRouting = "geo-us" | "geo-jp" | "in-region" | "global";
 
 export type PricingSnapshot = {
   modelId: string;

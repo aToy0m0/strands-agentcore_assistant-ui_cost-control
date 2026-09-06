@@ -10,7 +10,7 @@ const allowedKeys = new Set([
   "profile", "region", "defaultCdkPrefix", "runtimeDisplayName", "webDebugMode",
   "customDomainEnabled", "customDomainName", "hostedZoneId", "hostedZoneName", "certificateArn",
   "allowCrossRegionKnowledgeBases", "knowledgeBases", "gatewayTargets", "geminiEnabled", "geminiApiKeySecretName",
-  "enabledModelKeys", "entraEnabled", "entraTenantId", "entraClientId", "entraClientSecretName", "loginMethods",
+  "enabledModelKeys", "modelIds", "entraEnabled", "entraTenantId", "entraClientId", "entraClientSecretName", "loginMethods",
   "logRetentionDays", "runtimeLogRequest", "runtimeLogModel", "runtimeLogTool", "monthlyBudgetUsd",
   "priceVerificationEnabled",
 ]);
@@ -56,6 +56,14 @@ export function validateDeployConfig(value) {
   if (!/^\d+(\.\d{1,9})?$/u.test(config.monthlyBudgetUsd) || Number(config.monthlyBudgetUsd) <= 0) throw new Error("monthlyBudgetUsd must be greater than zero with at most 9 decimal places");
   for (const name of ["customDomainEnabled", "allowCrossRegionKnowledgeBases", "geminiEnabled", "entraEnabled", "priceVerificationEnabled"]) requiredBoolean(config, name);
   for (const name of ["knowledgeBases", "gatewayTargets", "enabledModelKeys"]) requiredArray(config, name);
+  const modelIds = object(config.modelIds, "modelIds");
+  for (const [key, value] of Object.entries(modelIds)) {
+    if (typeof value !== "string" || !value.trim()) throw new Error(`modelIds.${key} must be a non-empty string`);
+  }
+  for (const key of config.enabledModelKeys) {
+    if (typeof key !== "string" || !key.trim()) throw new Error("enabledModelKeys entries must be non-empty strings");
+    if (modelIds[key] === undefined) throw new Error(`modelIds.${key} is required because the model is enabled`);
+  }
   if (!Number.isInteger(config.logRetentionDays) || config.logRetentionDays <= 0) throw new Error("logRetentionDays must be a positive integer");
   for (const name of ["runtimeLogRequest", "runtimeLogModel", "runtimeLogTool"]) {
     if (!/^(on|off)$/u.test(config[name])) throw new Error(`${name} must be on or off`);
@@ -83,6 +91,7 @@ export function cdkArguments(config, mode) {
   contexts.set("knowledgeBasesBase64", base64url(config.knowledgeBases));
   contexts.set("gatewayTargetsBase64", base64url(config.gatewayTargets));
   contexts.set("enabledModelKeysBase64", base64url(config.enabledModelKeys));
+  contexts.set("modelIdsBase64", base64url(config.modelIds));
   const args = ["run", "--silent", mode === "diff" ? "cdk:diff" : "cdk:deploy", "--", "--profile", config.profile, "--region", config.region];
   for (const [key, value] of contexts) args.push("-c", `${key}=${value}`);
   return args;

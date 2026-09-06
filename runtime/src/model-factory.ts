@@ -31,10 +31,10 @@ function requiredEffort(selection: InferenceSelection): ReasoningEffort {
   return selection.reasoning.effort;
 }
 
-export function bedrockModelOptions(region: string, selection: InferenceSelection): BedrockModelOptions {
+export function bedrockModelOptions(region: string, selection: InferenceSelection, modelId: string): BedrockModelOptions {
   const model = modelByKey(selection.model);
   const common: BedrockModelOptions = {
-    region, modelId: model.modelId, stream: true, maxTokens: model.maxOutputTokens, useNativeTokenCount: true,
+    region, modelId, stream: true, maxTokens: model.maxOutputTokens, useNativeTokenCount: true,
   };
   switch (model.requestAdapter) {
     case "nova-reasoning": return { ...common, additionalRequestFields: selection.reasoning.enabled
@@ -53,12 +53,12 @@ export function bedrockModelOptions(region: string, selection: InferenceSelectio
   }
 }
 
-export function googleModelOptions(selection: InferenceSelection, apiKey: string): GoogleModelOptions {
+export function googleModelOptions(selection: InferenceSelection, apiKey: string, modelId: string): GoogleModelOptions {
   const model = modelByKey(selection.model);
   if (model.provider !== "google" || model.requestAdapter !== "gemini-thinking") throw new Error(`${selection.model} is not a Google model`);
   return {
     apiKey,
-    modelId: model.modelId,
+    modelId,
     maxTokens: model.maxOutputTokens,
     useNativeTokenCount: true,
     params: {
@@ -75,20 +75,29 @@ export function createConfiguredModel(
   selection: InferenceSelection,
   ledger: DynamoBudgetLedger,
   pricingCatalog: S3ModelPricingCatalog,
+  configuredModelId: string,
   googleApiKey?: string,
 ) {
   const model = modelByKey(selection.model);
+  if (!configuredModelId) throw new Error(`Configured model ID is missing: ${selection.model}`);
   const context: BudgetContext = {
     ledger,
     pricingCatalog,
-    pricingRouting: model.pricingRouting,
+    pricingRouting: pricingRoutingFor(configuredModelId, model.provider),
     pricingSourceRegion: model.provider === "google" ? "global" : region,
   };
   if (model.provider === "google") {
     if (!googleApiKey) throw new Error("Gemini API key is not configured");
-    return new BudgetControlledGoogleModel(googleModelOptions(selection, googleApiKey), context);
+    return new BudgetControlledGoogleModel(googleModelOptions(selection, googleApiKey, configuredModelId), context);
   }
-  return new BudgetControlledBedrockModel(bedrockModelOptions(region, selection), context);
+  return new BudgetControlledBedrockModel(bedrockModelOptions(region, selection, configuredModelId), context);
+}
+
+export function pricingRoutingFor(modelId: string, provider: string): PricingRouting {
+  if (provider === "google" || modelId.startsWith("global.")) return "global";
+  if (modelId.startsWith("us.")) return "geo-us";
+  if (modelId.startsWith("jp.")) return "geo-jp";
+  return "in-region";
 }
 
 async function prepare(

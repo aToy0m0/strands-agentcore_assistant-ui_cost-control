@@ -2,6 +2,16 @@
 
 Amazon BedrockとGoogle Geminiを同じチャットUIから利用し、アプリ単位のソフト月額上限でモデル費用を制御するサンプルです。配置先は`us-east-1`と`ap-northeast-1`をJSON configで切り替えられます。
 
+## 主な機能
+
+- Amazon Cognito認証と任意のMicrosoft Entra ID OIDC連携
+- AgentCore Runtimeとブラウザ間のAG-UIストリーミング
+- AgentCore Memoryによる会話履歴と利用者単位の長期記憶
+- 複数のBedrock Knowledge Base検索ツール
+- AgentCore Gateway経由の複数Lambdaターゲット
+- Amazon BedrockとGoogle Geminiを共通UIから選択するモデルカタログ
+- CloudWatch Dashboardによるモデル費用とトークン数の可視化
+
 ## 費用制御
 
 各モデル呼び出しの前に、プロバイダー標準のCountTokensを優先して入力トークン数を取得します。標準APIを利用できない場合はStrands SDKの推定値を使い、切り替えを構造化ログへ記録します。自作トークナイザーと最大出力費用の予約は使用しません。
@@ -32,19 +42,22 @@ npm run deploy
 
 東京配置では`deploy-config.ap-northeast-1.example.json`をコピーします。`scripts/deploy-config.json`はGit管理外です。CloudFrontの独自ドメインを使う場合、配置リージョンにかかわらずACM証明書は`us-east-1`で発行します。
 
-Cognitoの自己サインアップは無効です。初回利用者は[デプロイ手順](doc/deployment-guide.md#cognito利用者は管理者が作成する)に従い、管理スクリプトから作成します。
+Cognitoの自己サインアップは無効です。初回利用者は[デプロイ手順](doc/deployment-guide.md#cognito利用者を作成する)に従い、管理スクリプトから作成します。
 
 主要設定は次のとおりです。
 
 - `defaultCdkPrefix`: AWSリソース名、費用集計ID、Memory名前空間の共通入力
 - `monthlyBudgetUsd`: アプリ全体のソフト月額上限。再デプロイ後の次回判定から有効
 - `enabledModelKeys`: UI、Runtime検証、Bedrock IAMへ共通適用するモデルallowlist
+- `modelIds`: モデルキーごとの実呼び出しID。US／東京サンプルにリージョン別の推奨IDを収録
 - `knowledgeBases`: 利用可能な複数Knowledge Base
 - `gatewayTargets`: コード側カタログから有効化する複数Lambdaターゲット
 - `logRetentionDays`: CloudWatch Logs保持日数。開発は短期、本番は180日など環境別に指定
 - `priceVerificationEnabled`: 軽量な価格照合Lambda、メトリクス、Alarmの有効化
 
 全項目は[デプロイ設定一覧](doc/deployment-context-options.md)、運用は[デプロイ手順](doc/deployment-guide.md)を参照してください。
+
+Bedrock上でモデルが一覧表示され、契約状態が`AVAILABLE`でも、AWSアカウント単位の提供制限によりGPT-5.6 Luna、GPT-5.6 Sol、Claude Sonnet 5などが推論時に拒否される場合があります。これはモデルIDの誤りとは限りません。確認方法と切り分けは[Bedrockモデル利用契約の事前準備](doc/model-access-prerequisites.md)を参照してください。
 
 ## 検証
 
@@ -63,3 +76,30 @@ npm run deploy:test
 - `scripts/deploy.mjs`: JSON configの検証と`cdkdep`固定デプロイ
 
 CloudWatchには費用・トークン数の専用Dashboardを作成します。ログ本文の出力可否は用途別にconfigで制御できます。
+
+## ドキュメント
+
+- [コスト制御設計](doc/cost-control-design.md)
+- [モデル価格表と照合方針](doc/pricing-api-strategy.md)
+- [デプロイ手順](doc/deployment-guide.md)
+- [デプロイ設定一覧](doc/deployment-context-options.md)
+- [カスタムドメインのデプロイ手順](doc/custom-domain-deployment.md)
+- [Bedrockモデル利用契約の事前準備](doc/model-access-prerequisites.md)
+- [リソース命名設計](doc/resource-naming.md)
+- [Runtime機能](doc/runtime-features.md)
+- [UI機能](doc/ui-features.md)
+- [セキュリティと運用上の境界](doc/security-notes.md)
+- [フォルダ構成](doc/folder-structure.md)
+- [セキュリティドキュメント](SECURITY.md)
+
+## 制約
+
+- 月額上限は対応モデルの入力・出力トークン費用を対象とするソフト上限です。税、割引、為替、無料枠は計算へ含めません。
+- AgentCore Runtime、Memory、Gateway、Knowledge Base、Lambda、DynamoDB、KMS、CloudFront、CloudWatchなど、モデル以外の費用は上限対象外です。
+- 予約を持たないため、同時に開始した呼び出しの実費分だけ月額上限を超える可能性があります。
+- Hosted Zone、ACM証明書、Entraアプリ、GeminiとEntraのシークレットはスタック外で管理します。
+- WAF、短時間レート制限、Bedrock Guardrails、管理画面は含みません。
+
+## ライセンス
+
+[MIT License](LICENSE)

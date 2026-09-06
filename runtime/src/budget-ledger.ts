@@ -9,7 +9,7 @@ import type { NanoUsd } from "./cost.js";
 
 const IDEMPOTENCY_RETENTION_SECONDS = 180 * 24 * 60 * 60;
 
-export type UsageStatus = "APPLIED" | "NO_CHARGE" | "USAGE_UNAVAILABLE" | "UNCERTAIN" | "RESOLVED_NO_COST";
+export type UsageStatus = "APPLIED" | "NO_CHARGE" | "USAGE_UNAVAILABLE";
 
 export type UsageRecord = {
   usageEventId: string;
@@ -151,8 +151,7 @@ function deserializeUsage(item: Record<string, AttributeValue>): UsageRecord {
   const status = item.status?.S;
   const createdAt = item.createdAt?.S;
   if (!usageEventId || !month || !modelId || !createdAt
-    || (status !== "APPLIED" && status !== "NO_CHARGE" && status !== "USAGE_UNAVAILABLE"
-      && status !== "UNCERTAIN" && status !== "RESOLVED_NO_COST")) {
+    || (status !== "APPLIED" && status !== "NO_CHARGE" && status !== "USAGE_UNAVAILABLE")) {
     throw new Error("invalid usage event item");
   }
   return {

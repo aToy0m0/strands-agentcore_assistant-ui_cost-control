@@ -5,6 +5,7 @@
     "runtimeDisplayName": "AIエージェント",
     "knowledgeBases": "[{\"key\":\"internal-documents\",\"enabled\":true,\"region\":\"us-east-1\",\"knowledgeBaseId\":\"ABCDEFGHIJ\",\"toolName\":\"search_internal_documents\",\"description\":\"Search internal documents\",\"numberOfResults\":5}]",
     "gatewayTargets": "[{\"key\":\"support-directory\",\"enabled\":true,\"timeoutSeconds\":5,\"memorySizeMb\":128,\"environmentVariables\":{}}]",
-    "enabledModelKeys": "[\"nova-2-lite\",\"claude-haiku-4-5\",\"claude-sonnet-4-6\",\"claude-sonnet-5\",\"gpt-oss-20b\",\"gpt-oss-120b\",\"glm-4-7-flash\",\"glm-4-7\"]"
+    "enabledModelKeys": "[\"nova-2-lite\",\"claude-haiku-4-5\",\"claude-sonnet-4-6\",\"claude-sonnet-5\",\"gpt-oss-20b\",\"gpt-oss-120b\",\"glm-4-7-flash\",\"glm-4-7\"]",
+    "modelIds": "{\"nova-2-lite\":\"us.amazon.nova-2-lite-v1:0\",\"claude-haiku-4-5\":\"us.anthropic.claude-haiku-4-5-20251001-v1:0\",\"claude-sonnet-4-6\":\"us.anthropic.claude-sonnet-4-6\",\"claude-sonnet-5\":\"us.anthropic.claude-sonnet-5\",\"gpt-oss-20b\":\"openai.gpt-oss-20b-1:0\",\"gpt-oss-120b\":\"openai.gpt-oss-120b-1:0\",\"gpt-5-6-luna\":\"us.openai.gpt-5.6-luna\",\"glm-4-7-flash\":\"zai.glm-4.7-flash\",\"glm-4-7\":\"zai.glm-4.7\",\"gemini-3-5-flash\":\"gemini-3.5-flash\"}"
   }
 }

@@ -30,6 +30,7 @@
 | `geminiEnabled` | Geminiプロバイダーを有効化するか |
 | `geminiApiKeySecretName` | Gemini APIキーを保持するSecrets Manager名 |
 | `enabledModelKeys` | 配置環境で利用確認済みモデルのallowlist |
+| `modelIds` | モデルキーから実呼び出しIDへの対応表。有効モデルのIDは必須。未知キー、重複ID、不正な文字列は拒否 |
 | `entraEnabled` | Microsoft Entra ID連携の有効化 |
 | `entraTenantId` / `entraClientId` | Entra有効時の公開識別子 |
 | `entraClientSecretName` | Entraクライアントシークレットを保持するSecrets Manager名 |
@@ -40,6 +41,29 @@
 | `priceVerificationEnabled` | AWS価格の定期照合と警告Alarmを作成するか |
 
 未知のJSONキーは入力誤りとして拒否する。
+
+## モデルID
+
+`enabledModelKeys`と`modelIds`は役割が異なる。前者はUI表示・入力検証・IAM許可の対象を選び、後者はRuntimeが実際に呼び出すIDを決める。CDKは有効モデルに対応するIDがない場合にsynth前で停止し、指定されたIDをRuntime、価格表の参照キー、Bedrock IAMへまとめて反映する。別リージョンのIDへ暗黙には切り替えない。
+
+サンプルには、2026-09-06時点でAWS APIから確認した全対応モデルのIDを記載している。主なリージョン差は次のとおり。
+
+| configキー | `us-east-1` | `ap-northeast-1` |
+|---|---|---|
+| `nova-2-lite` | `us.amazon.nova-2-lite-v1:0` | `jp.amazon.nova-2-lite-v1:0` |
+| `claude-haiku-4-5` | `us.anthropic.claude-haiku-4-5-20251001-v1:0` | `jp.anthropic.claude-haiku-4-5-20251001-v1:0` |
+| `claude-sonnet-4-6` | `us.anthropic.claude-sonnet-4-6` | `jp.anthropic.claude-sonnet-4-6` |
+| `claude-sonnet-5` | `us.anthropic.claude-sonnet-5` | `global.anthropic.claude-sonnet-5` |
+| `gpt-oss-20b` | `openai.gpt-oss-20b-1:0` | 同左 |
+| `gpt-oss-120b` | `openai.gpt-oss-120b-1:0` | 同左 |
+| `gpt-5-6-luna` | `us.openai.gpt-5.6-luna` | `global.openai.gpt-5.6-luna` |
+| `glm-4-7-flash` | `zai.glm-4.7-flash` | 同左 |
+| `glm-4-7` | `zai.glm-4.7` | 同左 |
+| `gemini-3-5-flash` | `gemini-3.5-flash` | 同左 |
+
+`global.*`は東京リージョンのRuntimeから呼び出せるが、推論処理を国内に限定する指定ではない。国内処理が要件なら、Global IDを有効化する前にモデルの推論先を確認する。
+
+Geo／Global推論プロファイルは複数リージョンの基盤モデルへ転送されるため、CDKは`bedrock:InvokeModel`と`bedrock:CountTokens`のResourceを「指定された基盤モデルID」まで限定し、ARNのリージョン部分だけを`*`にする。モデルIDやAction全体をワイルドカードにはしない。
 
 ## Knowledge Base配列
 
@@ -80,6 +104,8 @@ Cognito提供ドメインは`<正規化済みdefaultCdkPrefix>-<CloudFormation S
 価格表はCDKアセットとしてVersioning付きS3へ配置する。Runtimeはモデル呼び出し時に価格表を読み、使用したS3 Version IDと単価を費用ログへ保存する。`priceVerificationEnabled`は照合機能の有無だけを変え、照合結果は呼び出し可否や価格表を変更しない。
 
 ## 適用方法
+
+既存の`scripts/deploy-config.json`に`modelIds`がない場合は、同じリージョンの最新サンプルからこの項目をコピーしてからdiffを実行する。欠落したままではデプロイスクリプトが停止する。
 
 ```powershell
 npm run deploy:diff

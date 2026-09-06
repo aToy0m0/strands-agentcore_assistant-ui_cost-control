@@ -48,11 +48,21 @@ import {
   parseEnabledModelKeys,
   parseGatewayLambdaTargets,
   parseKnowledgeBases,
+  parseModelIds,
 } from "../shared/deployment-resources.js";
 import { cognitoDomainPrefix, resolveResourceNames, resolveRuntimeDisplayName } from "./naming.js";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const entraProviderName = "MicrosoftEntraID";
+
+export function pricingCatalogForModelIds(modelIds: Readonly<Record<string, string>>) {
+  const models = Object.fromEntries(COST_CONTROLLED_MODEL_CATALOG.flatMap((model) => {
+    const configuredModelId = modelIds[model.key];
+    const defaultPricing = MODEL_PRICING_CATALOG.models[model.modelId as keyof typeof MODEL_PRICING_CATALOG.models];
+    return configuredModelId && defaultPricing ? [[configuredModelId, defaultPricing]] : [];
+  }));
+  return { ...MODEL_PRICING_CATALOG, models };
+}
 
 const gatewayToolCatalog = {
   "support-directory": {
@@ -189,6 +199,13 @@ export class AgentCoreCostControlStack extends Stack {
       encodedEnabledModelKeys ?? this.node.tryGetContext("enabledModelKeys"),
       COST_CONTROLLED_MODEL_CATALOG.map((model) => model.key),
     );
+    const encodedModelIds = decodeBase64UrlContext(this.node.tryGetContext("modelIdsBase64"), "modelIdsBase64");
+    const modelIds = parseModelIds(
+      encodedModelIds ?? this.node.tryGetContext("modelIds"),
+      enabledModelKeys,
+      COST_CONTROLLED_MODEL_CATALOG.map((model) => model.key),
+    );
+    const enabledModelIds = Object.fromEntries(enabledModelKeys.map((key) => [key, modelIds[key]]));
     const geminiEnabledValue = this.node.tryGetContext("geminiEnabled");
     const geminiEnabled = geminiEnabledValue === true || geminiEnabledValue === "true";
     const geminiApiKeySecretName = geminiEnabled ? contextString(this, "geminiApiKeySecretName") : undefined;
@@ -402,7 +419,7 @@ export class AgentCoreCostControlStack extends Stack {
     const pricingCatalogDeployment = new BucketDeployment(this, "PricingCatalogDeployment", {
       destinationBucket: pricingCatalogBucket,
       destinationKeyPrefix: "catalog",
-      sources: [Source.jsonData("model-pricing.json", MODEL_PRICING_CATALOG)],
+      sources: [Source.jsonData("model-pricing.json", pricingCatalogForModelIds(modelIds))],
       prune: true,
       logRetention,
     });
@@ -536,9 +553,9 @@ export class AgentCoreCostControlStack extends Stack {
     }));
     const bedrockModels = COST_CONTROLLED_MODEL_CATALOG.filter((model) => model.provider !== "google" && enabledModelKeys.includes(model.key));
     const bedrockResources = (models: readonly (typeof bedrockModels)[number][]) => models.flatMap((model) => [
-      ...(model.modelId.startsWith("us.") ? [
-        `arn:${this.partition}:bedrock:${this.region}:${this.account}:inference-profile/${model.modelId}`,
-        ...["us-east-1", "us-east-2", "us-west-2"].flatMap((region) => model.foundationModelIds.map((foundationModelId) => `arn:${this.partition}:bedrock:${region}::foundation-model/${foundationModelId}`)),
+      ...(/^(?:us|jp|global)\./u.test(modelIds[model.key]) ? [
+        `arn:${this.partition}:bedrock:${this.region}:${this.account}:inference-profile/${modelIds[model.key]}`,
+        ...model.foundationModelIds.map((foundationModelId) => `arn:${this.partition}:bedrock:*::foundation-model/${foundationModelId}`),
       ] : model.foundationModelIds.map((foundationModelId) => `arn:${this.partition}:bedrock:${this.region}::foundation-model/${foundationModelId}`)),
       ...("requiresDefaultProject" in model && model.requiresDefaultProject ? [`arn:${this.partition}:bedrock:${this.region}:${this.account}:project/default`] : []),
     ]);
@@ -598,6 +615,7 @@ export class AgentCoreCostControlStack extends Stack {
         PRICING_CATALOG_BUCKET_NAME: pricingCatalogBucket.bucketName,
         PRICING_CATALOG_OBJECT_KEY: pricingCatalogObjectKey,
         ENABLED_MODEL_KEYS_JSON: JSON.stringify(enabledModelKeys),
+        MODEL_IDS_JSON: JSON.stringify(enabledModelIds),
         ...(geminiApiKeySecretName ? { GEMINI_API_KEY_SECRET_NAME: geminiApiKeySecretName } : {}),
         ...runtimeLogEnvironment,
       },

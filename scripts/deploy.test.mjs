@@ -16,6 +16,7 @@ function config(overrides = {}) {
     gatewayTargets: [],
     geminiEnabled: false,
     enabledModelKeys: ["nova-2-lite"],
+    modelIds: { "nova-2-lite": "us.amazon.nova-2-lite-v1:0" },
     entraEnabled: false,
     loginMethods: "cognito",
     logRetentionDays: 14,
@@ -34,6 +35,11 @@ describe("deployment config", () => {
     const args = cdkArguments(value, "diff");
     assert.deepEqual(args.slice(0, 8), ["run", "--silent", "cdk:diff", "--", "--profile", "cdkdep", "--region", "us-east-1"]);
     assert.ok(args.some((entry) => entry.startsWith("knowledgeBasesBase64=")));
+    assert.ok(args.some((entry) => entry.startsWith("modelIdsBase64=")));
+  });
+
+  it("requires an explicit model ID for every enabled model", () => {
+    assert.throws(() => validateDeployConfig(config({ modelIds: {} })), /modelIds\.nova-2-lite/u);
   });
 
   it("rejects profiles other than cdkdep", () => {

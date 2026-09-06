@@ -58,6 +58,18 @@ function parseJsonArray(configured: unknown, name: string): unknown[] {
   return parsed;
 }
 
+function parseJsonRecord(configured: unknown, name: string): Record<string, unknown> {
+  let parsed = configured;
+  if (typeof configured === "string") {
+    try {
+      parsed = JSON.parse(configured);
+    } catch (error) {
+      throw new Error(`${name} must be valid JSON`, { cause: error });
+    }
+  }
+  return record(parsed, name);
+}
+
 function assertUnique(values: readonly string[], name: string): void {
   if (new Set(values).size !== values.length) throw new Error(`${name} must be unique`);
 }
@@ -134,4 +146,25 @@ export function parseEnabledModelKeys(configured: unknown, availableKeys: readon
   const unknown = values.find((value) => !availableKeys.includes(value));
   if (unknown) throw new Error(`enabledModelKeys contains unknown model key '${unknown}'`);
   return values;
+}
+
+export function parseModelIds(
+  configured: unknown,
+  enabledModelKeys: readonly string[],
+  availableKeys: readonly string[],
+): Record<string, string> {
+  const parsed = parseJsonRecord(configured, "modelIds");
+  const unknown = Object.keys(parsed).find((key) => !availableKeys.includes(key));
+  if (unknown) throw new Error(`modelIds contains unknown model key '${unknown}'`);
+  const modelIds = Object.fromEntries(Object.entries(parsed).map(([key, value]) => {
+    const modelId = stringValue(value, `modelIds.${key}`);
+    if (!/^[A-Za-z0-9._:-]+$/u.test(modelId)) throw new Error(`modelIds.${key} has an invalid format`);
+    return [key, modelId];
+  }));
+  const missing = enabledModelKeys.find((key) => modelIds[key] === undefined);
+  if (missing) throw new Error(`modelIds.${missing} is required because the model is enabled`);
+  const duplicate = Object.entries(modelIds).find(([, modelId], index, entries) =>
+    entries.findIndex(([, candidate]) => candidate === modelId) !== index);
+  if (duplicate) throw new Error(`modelIds contains duplicate model ID '${duplicate[1]}'`);
+  return modelIds;
 }
