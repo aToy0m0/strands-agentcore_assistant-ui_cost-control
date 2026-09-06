@@ -1,4 +1,4 @@
-export const WORKMATE_SYSTEM_PROMPT = `You are Workmate.
+export const SYSTEM_PROMPT = `You are an AI assistant.
 
 Answer the user's request accurately and concisely, you "can" use tools, not "necessary".
 - Use current_datetime for the current date or time and for timezone conversion.

@@ -1,9 +1,16 @@
+type ContextPriceTier = {
+  maxInputTokens: number;
+  inputNanoUsdPerMillionTokens: string;
+  outputNanoUsdPerMillionTokens: string;
+};
+
 export type InitialModelPricing = {
+  sourceProvider?: "aws" | "aws-doc" | "google";
   modelId: string;
   status: "ACTIVE";
   currency: "USD";
-  sourceRegion: "us-east-1";
-  routing: "geo-us" | "in-region";
+  sourceRegion: "us-east-1" | "global";
+  routing: "geo-us" | "in-region" | "global";
   serviceTier: "standard";
   inputNanoUsdPerMillionTokens: string;
   outputNanoUsdPerMillionTokens: string;
@@ -12,7 +19,8 @@ export type InitialModelPricing = {
   version: string;
   productId?: string;
   sources: readonly string[];
-  priceList: {
+  contextPriceTiers?: readonly ContextPriceTier[];
+  priceList?: {
     serviceCode: "AmazonBedrock" | "AmazonBedrockFoundationModels";
     productAttributeName: "model" | "servicename";
     productAttributeValue: string;
@@ -88,6 +96,25 @@ export const INITIAL_MODEL_PRICING: readonly InitialModelPricing[] = [
     priceList: { serviceCode: "AmazonBedrockFoundationModels", productAttributeName: "servicename", productAttributeValue: "Claude Sonnet 5 (Amazon Bedrock Edition)", inputUsageType: "USE1-MP:USE1_input_tokens_standard-Units", outputUsageType: "USE1-MP:USE1_output_tokens_standard-Units" },
   },
   {
+    sourceProvider: "aws-doc",
+    modelId: "us.openai.gpt-5.6-luna",
+    status: "ACTIVE",
+    currency: "USD",
+    sourceRegion: "us-east-1",
+    routing: "geo-us",
+    serviceTier: "standard",
+    inputNanoUsdPerMillionTokens: "220000000",
+    outputNanoUsdPerMillionTokens: "1320000000",
+    verifiedAt: "2026-09-05T00:00:00.000Z",
+    verifiedUntil,
+    version: "2026-09-05-gpt-5-6-luna-geo-standard",
+    sources: ["AWS_BEDROCK_MODEL_CARD:GPT-5.6 Luna:Geo CRIS Standard"],
+    contextPriceTiers: [
+      { maxInputTokens: 272_000, inputNanoUsdPerMillionTokens: "220000000", outputNanoUsdPerMillionTokens: "1320000000" },
+      { maxInputTokens: 1_000_000, inputNanoUsdPerMillionTokens: "440000000", outputNanoUsdPerMillionTokens: "1980000000" },
+    ],
+  },
+  {
     modelId: "openai.gpt-oss-20b-1:0",
     status: "ACTIVE",
     currency: "USD",
@@ -147,4 +174,40 @@ export const INITIAL_MODEL_PRICING: readonly InitialModelPricing[] = [
     sources: ["AWS_PRICE_LIST:AmazonBedrock:GLM 4.7"],
     priceList: { serviceCode: "AmazonBedrock", productAttributeName: "model", productAttributeValue: "GLM 4.7", inputUsageType: "USE1-zai.glm-4.7-input-tokens", outputUsageType: "USE1-zai.glm-4.7-output-tokens" },
   },
+  {
+    sourceProvider: "google",
+    modelId: "gemini-3.5-flash",
+    status: "ACTIVE",
+    currency: "USD",
+    sourceRegion: "global",
+    routing: "global",
+    serviceTier: "standard",
+    inputNanoUsdPerMillionTokens: "1500000000",
+    outputNanoUsdPerMillionTokens: "9000000000",
+    verifiedAt: "2026-09-04T00:00:00.000Z",
+    verifiedUntil,
+    version: "2026-09-04-gemini-3-5-flash-standard",
+    sources: ["GOOGLE_GEMINI_API_PRICING:gemini-3.5-flash:standard"],
+  },
 ] as const;
+
+export const MODEL_PRICING_CATALOG = {
+  schemaVersion: 1,
+  catalogVersion: "2026-09-05.2",
+  currency: "USD",
+  models: Object.fromEntries(INITIAL_MODEL_PRICING.map((pricing) => [pricing.modelId, {
+    sourceProvider: pricing.sourceProvider ?? "aws",
+    sourceRegion: pricing.sourceRegion,
+    routing: pricing.routing,
+    serviceTier: pricing.serviceTier,
+    inputNanoUsdPerMillionTokens: pricing.inputNanoUsdPerMillionTokens,
+    outputNanoUsdPerMillionTokens: pricing.outputNanoUsdPerMillionTokens,
+    verifiedAt: pricing.verifiedAt,
+    reviewDueAt: pricing.verifiedUntil,
+    priceVersion: pricing.version,
+    sources: pricing.sources,
+    ...(pricing.productId ? { productId: pricing.productId } : {}),
+    ...(pricing.priceList ? { priceList: pricing.priceList } : {}),
+    ...(pricing.contextPriceTiers ? { contextPriceTiers: pricing.contextPriceTiers } : {}),
+  }])),
+} as const;

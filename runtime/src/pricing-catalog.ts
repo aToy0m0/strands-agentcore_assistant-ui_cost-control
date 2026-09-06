@@ -1,96 +1,146 @@
-import { DynamoDBClient, GetItemCommand, type AttributeValue } from "@aws-sdk/client-dynamodb";
+import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import type { NanoUsd, RateCard } from "./cost.js";
 
-export type PricingRouting = "geo-us" | "in-region";
+export type PricingRouting = "geo-us" | "in-region" | "global";
 
 export type PricingSnapshot = {
   modelId: string;
-  version: string;
+  catalogVersion: string;
+  catalogS3VersionId: string;
   verifiedAt: string;
-  verifiedUntil: string;
+  reviewDueAt: string;
   inputPerMillionTokens: NanoUsd;
   outputPerMillionTokens: NanoUsd;
+  contextTierMaxInputTokens?: number;
 };
 
 type PricingCatalogConfig = {
-  tableName: string;
+  bucketName: string;
+  objectKey: string;
   sourceRegion: string;
   serviceTier: "standard";
+  warningSink?: (warning: PricingWarning) => void;
+};
+
+export type PricingWarning = {
+  event: "pricing.configuration.warning";
+  modelId: string;
+  reason: "CONDITION_MISMATCH" | "REVIEW_OVERDUE";
+  details: Record<string, string>;
 };
 
 export class ModelPricingUnavailableError extends Error {
-  constructor(message: string) {
-    super(message);
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = "ModelPricingUnavailableError";
   }
 }
 
-export class DynamoModelPricingCatalog {
-  constructor(private readonly client: DynamoDBClient, private readonly config: PricingCatalogConfig) {}
+export class S3ModelPricingCatalog {
+  constructor(private readonly client: S3Client, private readonly config: PricingCatalogConfig) {}
 
-  async requiredSnapshot(modelId: string, routing: PricingRouting, now = new Date()): Promise<PricingSnapshot> {
+  async requiredSnapshot(modelId: string, routing: PricingRouting, now = new Date(), sourceRegion = this.config.sourceRegion, inputTokens?: number): Promise<PricingSnapshot> {
     if (!modelId) throw new Error("modelId is required for pricing");
     if (Number.isNaN(now.getTime())) throw new Error("pricing validation date is invalid");
-    const result = await this.client.send(new GetItemCommand({
-      TableName: this.config.tableName,
-      Key: { modelId: { S: modelId } },
-      ConsistentRead: true,
-    }));
-    if (!result.Item) throw new ModelPricingUnavailableError(`モデル価格が登録されていないため実行を停止しました: ${modelId}`);
-    return parseSnapshot(result.Item, { modelId, routing, ...this.config }, now);
+    let result;
+    try {
+      result = await this.client.send(new GetObjectCommand({ Bucket: this.config.bucketName, Key: this.config.objectKey }));
+    } catch (cause) {
+      throw new ModelPricingUnavailableError("承認済みモデル価格表を取得できないため実行を停止しました", { cause });
+    }
+    const versionId = result.VersionId;
+    if (!versionId || !result.Body) throw new ModelPricingUnavailableError("承認済みモデル価格表のS3バージョンを確認できません");
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(await result.Body.transformToString("utf8"));
+    } catch (cause) {
+      throw new ModelPricingUnavailableError("承認済みモデル価格表が有効なJSONではありません", { cause });
+    }
+    return parseCatalog(parsed, modelId, routing, sourceRegion, this.config.serviceTier, versionId, now, this.config.warningSink, inputTokens);
   }
 }
 
 export function rateCard(snapshot: PricingSnapshot): RateCard {
+  return { inputPerMillionTokens: snapshot.inputPerMillionTokens, outputPerMillionTokens: snapshot.outputPerMillionTokens };
+}
+
+function parseCatalog(
+  value: unknown,
+  modelId: string,
+  expectedRouting: PricingRouting,
+  expectedRegion: string,
+  expectedTier: "standard",
+  versionId: string,
+  now: Date,
+  warningSink?: (warning: PricingWarning) => void,
+  inputTokens?: number,
+): PricingSnapshot {
+  const root = requiredObject(value, "price catalog");
+  if (root.schemaVersion !== 1) throw new ModelPricingUnavailableError("承認済みモデル価格表のschemaVersionが不正です");
+  const catalogVersion = requiredString(root.catalogVersion, "catalogVersion");
+  if (root.currency !== "USD") throw new ModelPricingUnavailableError("承認済みモデル価格表の通貨はUSDである必要があります");
+  const models = requiredObject(root.models, "models");
+  const model = requiredObject(models[modelId], `models.${modelId}`);
+  const verifiedAt = requiredDate(model.verifiedAt, "verifiedAt");
+  const reviewDueAt = requiredDate(model.reviewDueAt, "reviewDueAt");
+  const sourceRegion = requiredString(model.sourceRegion, "sourceRegion");
+  const routing = requiredString(model.routing, "routing");
+  const serviceTier = requiredString(model.serviceTier, "serviceTier");
+  const mismatches: Record<string, string> = {};
+  if (sourceRegion !== expectedRegion) mismatches.sourceRegion = `catalog=${sourceRegion}, runtime=${expectedRegion}`;
+  if (routing !== expectedRouting) mismatches.routing = `catalog=${routing}, runtime=${expectedRouting}`;
+  if (serviceTier !== expectedTier) mismatches.serviceTier = `catalog=${serviceTier}, runtime=${expectedTier}`;
+  if (Object.keys(mismatches).length > 0) warningSink?.({ event: "pricing.configuration.warning", modelId, reason: "CONDITION_MISMATCH", details: mismatches });
+  if (Date.parse(reviewDueAt) < now.getTime()) {
+    warningSink?.({ event: "pricing.configuration.warning", modelId, reason: "REVIEW_OVERDUE", details: { reviewDueAt } });
+  }
+  const contextTier = resolveContextTier(model.contextPriceTiers, inputTokens);
   return {
-    inputPerMillionTokens: snapshot.inputPerMillionTokens,
-    outputPerMillionTokens: snapshot.outputPerMillionTokens,
+    modelId,
+    catalogVersion,
+    catalogS3VersionId: versionId,
+    verifiedAt,
+    reviewDueAt,
+    inputPerMillionTokens: requiredPositiveNanoUsd(contextTier?.inputNanoUsdPerMillionTokens ?? model.inputNanoUsdPerMillionTokens, "inputNanoUsdPerMillionTokens"),
+    outputPerMillionTokens: requiredPositiveNanoUsd(contextTier?.outputNanoUsdPerMillionTokens ?? model.outputNanoUsdPerMillionTokens, "outputNanoUsdPerMillionTokens"),
+    ...(contextTier ? { contextTierMaxInputTokens: Number(contextTier.maxInputTokens) } : {}),
   };
 }
 
-function parseSnapshot(
-  item: Record<string, AttributeValue>,
-  expected: PricingCatalogConfig & { modelId: string; routing: PricingRouting },
-  now: Date,
-): PricingSnapshot {
-  const modelId = requiredString(item, "modelId");
-  const status = requiredString(item, "status");
-  const currency = requiredString(item, "currency");
-  const sourceRegion = requiredString(item, "sourceRegion");
-  const routing = requiredString(item, "routing");
-  const serviceTier = requiredString(item, "serviceTier");
-  const version = requiredString(item, "version");
-  const verifiedAt = requiredDate(item, "verifiedAt");
-  const verifiedUntil = requiredDate(item, "verifiedUntil");
-  const inputPerMillionTokens = requiredPositiveNanoUsd(item, "inputNanoUsdPerMillionTokens");
-  const outputPerMillionTokens = requiredPositiveNanoUsd(item, "outputNanoUsdPerMillionTokens");
-
-  if (modelId !== expected.modelId || sourceRegion !== expected.sourceRegion || routing !== expected.routing || serviceTier !== expected.serviceTier || currency !== "USD") {
-    throw new ModelPricingUnavailableError(`モデル価格の適用条件が一致しないため実行を停止しました: ${expected.modelId}`);
+function resolveContextTier(value: unknown, inputTokens?: number): Record<string, unknown> | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length === 0) throw new ModelPricingUnavailableError("承認済みモデル価格表のcontextPriceTiersが不正です");
+  if (!Number.isSafeInteger(inputTokens) || inputTokens! < 0) throw new ModelPricingUnavailableError("コンテキスト段階価格には入力トークン数が必要です");
+  let previousMaximum = 0;
+  for (const [index, entry] of value.entries()) {
+    const tier = requiredObject(entry, `contextPriceTiers[${index}]`);
+    const maximum = tier.maxInputTokens;
+    if (!Number.isSafeInteger(maximum) || Number(maximum) <= previousMaximum) throw new ModelPricingUnavailableError("承認済みモデル価格表のcontextPriceTiers.maxInputTokensが不正です");
+    previousMaximum = Number(maximum);
+    if (inputTokens! <= previousMaximum) return tier;
   }
-  if (status !== "ACTIVE") throw new ModelPricingUnavailableError(`モデル価格が有効ではないため実行を停止しました: ${expected.modelId}`);
-  if (now.getTime() < Date.parse(verifiedAt) || now.getTime() > Date.parse(verifiedUntil)) {
-    throw new ModelPricingUnavailableError(`モデル価格の確認期限外のため実行を停止しました: ${expected.modelId}`);
-  }
-  return { modelId, version, verifiedAt, verifiedUntil, inputPerMillionTokens, outputPerMillionTokens };
+  throw new ModelPricingUnavailableError("入力トークン数に対応する承認済みコンテキスト価格がありません");
 }
 
-function requiredString(item: Record<string, AttributeValue>, name: string): string {
-  const value = item[name]?.S;
-  if (!value?.trim()) throw new ModelPricingUnavailableError(`モデル価格の${name}が不正です`);
+function requiredObject(value: unknown, name: string): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new ModelPricingUnavailableError(`承認済みモデル価格表の${name}が不正です`);
+  return value as Record<string, unknown>;
+}
+
+function requiredString(value: unknown, name: string): string {
+  if (typeof value !== "string" || !value.trim()) throw new ModelPricingUnavailableError(`承認済みモデル価格表の${name}が不正です`);
   return value;
 }
 
-function requiredDate(item: Record<string, AttributeValue>, name: string): string {
-  const value = requiredString(item, name);
-  if (Number.isNaN(Date.parse(value))) throw new ModelPricingUnavailableError(`モデル価格の${name}が日時ではありません`);
-  return value;
+function requiredDate(value: unknown, name: string): string {
+  const date = requiredString(value, name);
+  if (Number.isNaN(Date.parse(date))) throw new ModelPricingUnavailableError(`承認済みモデル価格表の${name}が日時ではありません`);
+  return date;
 }
 
-function requiredPositiveNanoUsd(item: Record<string, AttributeValue>, name: string): NanoUsd {
-  const value = item[name]?.N;
-  if (!value || !/^\d+$/u.test(value)) throw new ModelPricingUnavailableError(`モデル価格の${name}が不正です`);
-  const parsed = BigInt(value);
-  if (parsed <= 0n) throw new ModelPricingUnavailableError(`モデル価格の${name}は0より大きい必要があります`);
-  return parsed;
+function requiredPositiveNanoUsd(value: unknown, name: string): NanoUsd {
+  if (typeof value !== "string" || !/^\d+$/u.test(value) || BigInt(value) <= 0n) {
+    throw new ModelPricingUnavailableError(`承認済みモデル価格表の${name}が不正です`);
+  }
+  return BigInt(value);
 }

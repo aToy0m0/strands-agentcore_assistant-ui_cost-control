@@ -177,7 +177,7 @@ export function AgUiRuntimeProvider({ config, children }: { config: RuntimeConfi
       })
       .catch((error: unknown) => {
         debugError("history.list.failed", error);
-        if (active) window.dispatchEvent(new CustomEvent("workmate-error", { detail: error instanceof Error ? error.message : String(error) }));
+        if (active) window.dispatchEvent(new CustomEvent("agent-error", { detail: error instanceof Error ? error.message : String(error) }));
       })
       .finally(() => {
         if (active) setIsLoadingThreads(false);
@@ -209,7 +209,7 @@ export function AgUiRuntimeProvider({ config, children }: { config: RuntimeConfi
 
   const agent = useMemo(() => new RunErrorAwareHttpAgent({
     url: runtimeInvocationUrl(config),
-    agentId: "workmate",
+    agentId: "agent",
     threadId,
     headers: { Accept: "text/event-stream" },
     fetch: authenticatedFetch(threadId),
@@ -220,20 +220,30 @@ export function AgUiRuntimeProvider({ config, children }: { config: RuntimeConfi
     error: (...values: unknown[]) => debugError("assistant-ui", values),
   } : undefined, [config.debug]);
   const attachments = useMemo(() => new CompositeAttachmentAdapter([new SimpleImageAttachmentAdapter(), new SimpleTextAttachmentAdapter()]), []);
+  const inferenceOptions = useMemo(() => {
+    const models = DEFAULT_RUNTIME_OPTIONS.models.filter((model) => config.features.enabledModelKeys.includes(model.id));
+    const configuredDefault = models.some((model) => model.id === DEFAULT_RUNTIME_OPTIONS.defaultSelection.model)
+      ? DEFAULT_RUNTIME_OPTIONS.defaultSelection.model
+      : models[0]!.id;
+    return {
+      ...DEFAULT_RUNTIME_OPTIONS,
+      defaultSelection: { ...DEFAULT_RUNTIME_OPTIONS.defaultSelection, model: configuredDefault },
+      models,
+    };
+  }, [config.features.enabledModelKeys]);
   const runtime = useAgUiRuntime({
     agent,
     logger,
     showThinking: true,
     onError: (cause) => {
       debugError("ag-ui.runtime.error", cause);
-      window.dispatchEvent(new CustomEvent("workmate-error", { detail: cause.message }));
     },
     adapters: {
       threadList,
       attachments,
       speech: useMemo(() => new WebSpeechSynthesisAdapter(), []),
       dictation: useMemo(() => WebSpeechDictationAdapter.isSupported() ? new WebSpeechDictationAdapter({ language: "ja-JP", continuous: true }) : undefined, []),
-      feedback: { submit: ({ type }) => window.dispatchEvent(new CustomEvent("workmate-feedback", { detail: type })) },
+      feedback: { submit: ({ type }) => window.dispatchEvent(new CustomEvent("agent-feedback", { detail: type })) },
     },
   });
   useEffect(() => {
@@ -243,7 +253,7 @@ export function AgUiRuntimeProvider({ config, children }: { config: RuntimeConfi
     };
   }, [runtime]);
 
-  return <AssistantRuntimeProvider runtime={runtime}><InferenceSettingsProvider options={DEFAULT_RUNTIME_OPTIONS}><ThreadLifecycleSync onRunStart={showCurrent} /><Fragment key={threadId}>{children}</Fragment></InferenceSettingsProvider></AssistantRuntimeProvider>;
+  return <AssistantRuntimeProvider runtime={runtime}><InferenceSettingsProvider options={inferenceOptions}><ThreadLifecycleSync onRunStart={showCurrent} /><Fragment key={threadId}>{children}</Fragment></InferenceSettingsProvider></AssistantRuntimeProvider>;
 }
 
 function ThreadLifecycleSync({ onRunStart }: { onRunStart: () => void }) {

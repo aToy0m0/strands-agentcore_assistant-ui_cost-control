@@ -40,12 +40,12 @@ function debugText(value: unknown): string {
 
 export function debugLog(event: string, data?: unknown): void {
   if (!enabled) return;
-  console.debug(data === undefined ? `[Workmate debug] ${event}` : `[Workmate debug] ${event}\n${debugText(data)}`);
+  console.debug(data === undefined ? `[AgentCore Cost Control debug] ${event}` : `[AgentCore Cost Control debug] ${event}\n${debugText(data)}`);
 }
 
 export function debugError(event: string, cause: unknown): void {
   if (!enabled) return;
-  console.error(`[Workmate debug] ${event}\n${debugText(cause)}`);
+  console.error(`[AgentCore Cost Control debug] ${event}\n${debugText(cause)}`);
 }
 
 export function parsedRequestBody(body: BodyInit | null | undefined): unknown {
@@ -63,7 +63,7 @@ export function installBrowserDebugHandlers(): () => void {
   const rejection = (event: PromiseRejectionEvent) => debugError("window.unhandledrejection", event.reason);
   window.addEventListener("error", error);
   window.addEventListener("unhandledrejection", rejection);
-  console.info("[Workmate debug] enabled");
+  console.info("[AgentCore Cost Control debug] enabled");
   return () => {
     window.removeEventListener("error", error);
     window.removeEventListener("unhandledrejection", rejection);

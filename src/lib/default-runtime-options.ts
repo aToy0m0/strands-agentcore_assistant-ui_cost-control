@@ -10,7 +10,7 @@ export const DEFAULT_RUNTIME_OPTIONS: RuntimeOptions = {
     id: model.key,
     label: model.label,
     provider: model.provider,
-    costControl: model.tokenCounter.kind === "usage-only" ? "soft" : "hard",
+    costControl: "hard",
     reasoning: model.reasoning,
   })),
 };

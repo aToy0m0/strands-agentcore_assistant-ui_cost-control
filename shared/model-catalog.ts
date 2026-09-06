@@ -1,12 +1,8 @@
 export type ReasoningEffort = "low" | "medium" | "high";
 export type ReasoningControl = "optional" | "always-on";
 export type ReasoningVisibility = "redacted" | "summary" | "full";
-export type ModelProvider = "amazon" | "anthropic" | "openai" | "zai";
-export type TokenCounter =
-  | { kind: "bedrock-runtime"; modelId: string }
-  | { kind: "bedrock-mantle-anthropic"; modelId: string }
-  | { kind: "usage-only" }
-  | { kind: "unsupported"; reason: string };
+export type ModelProvider = "amazon" | "anthropic" | "openai" | "zai" | "google";
+export type TokenCounter = { kind: "provider-native-with-estimate" };
 
 export type ModelCatalogEntry = {
   key: string;
@@ -16,8 +12,10 @@ export type ModelCatalogEntry = {
   availabilityModelId: string;
   foundationModelIds: readonly string[];
   tokenCounter: TokenCounter;
-  pricingRouting: "geo-us" | "in-region";
-  requestAdapter: "nova-reasoning" | "claude-budget" | "claude-adaptive" | "claude-always-on" | "gpt-oss-reasoning" | "glm-thinking";
+  pricingRouting: "geo-us" | "in-region" | "global";
+  requestAdapter: "nova-reasoning" | "claude-budget" | "claude-adaptive" | "claude-always-on" | "openai-reasoning" | "glm-thinking" | "gemini-thinking";
+  maxOutputTokens: number;
+  requiresDefaultProject?: true;
   reasoning: {
     control: ReasoningControl;
     efforts: readonly ReasoningEffort[];
@@ -35,8 +33,9 @@ export const MODEL_CATALOG = [
     modelId: "us.amazon.nova-2-lite-v1:0",
     availabilityModelId: "amazon.nova-2-lite-v1:0",
     foundationModelIds: ["amazon.nova-2-lite-v1:0"],
-    tokenCounter: { kind: "usage-only" },
+    tokenCounter: { kind: "provider-native-with-estimate" },
     pricingRouting: "geo-us",
+    maxOutputTokens: 4_096,
     requestAdapter: "nova-reasoning",
     reasoning: { control: "optional", efforts, contentVisibility: "redacted" },
   },
@@ -47,8 +46,9 @@ export const MODEL_CATALOG = [
     modelId: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
     availabilityModelId: "anthropic.claude-haiku-4-5-20251001-v1:0",
     foundationModelIds: ["anthropic.claude-haiku-4-5-20251001-v1:0"],
-    tokenCounter: { kind: "usage-only" },
+    tokenCounter: { kind: "provider-native-with-estimate" },
     pricingRouting: "geo-us",
+    maxOutputTokens: 16_000,
     requestAdapter: "claude-budget",
     reasoning: { control: "optional", efforts, contentVisibility: "summary" },
   },
@@ -59,8 +59,9 @@ export const MODEL_CATALOG = [
     modelId: "us.anthropic.claude-sonnet-4-6",
     availabilityModelId: "anthropic.claude-sonnet-4-6",
     foundationModelIds: ["anthropic.claude-sonnet-4-6"],
-    tokenCounter: { kind: "usage-only" },
+    tokenCounter: { kind: "provider-native-with-estimate" },
     pricingRouting: "geo-us",
+    maxOutputTokens: 16_000,
     requestAdapter: "claude-adaptive",
     reasoning: { control: "optional", efforts, contentVisibility: "summary" },
   },
@@ -71,8 +72,9 @@ export const MODEL_CATALOG = [
     modelId: "us.anthropic.claude-sonnet-5",
     availabilityModelId: "anthropic.claude-sonnet-5",
     foundationModelIds: ["anthropic.claude-sonnet-5"],
-    tokenCounter: { kind: "usage-only" },
+    tokenCounter: { kind: "provider-native-with-estimate" },
     pricingRouting: "geo-us",
+    maxOutputTokens: 16_000,
     requestAdapter: "claude-always-on",
     reasoning: { control: "always-on", efforts, contentVisibility: "summary" },
   },
@@ -83,9 +85,10 @@ export const MODEL_CATALOG = [
     modelId: "openai.gpt-oss-20b-1:0",
     availabilityModelId: "openai.gpt-oss-20b-1:0",
     foundationModelIds: ["openai.gpt-oss-20b-1:0"],
-    tokenCounter: { kind: "usage-only" },
+    tokenCounter: { kind: "provider-native-with-estimate" },
     pricingRouting: "in-region",
-    requestAdapter: "gpt-oss-reasoning",
+    maxOutputTokens: 16_000,
+    requestAdapter: "openai-reasoning",
     reasoning: { control: "always-on", efforts, contentVisibility: "full" },
   },
   {
@@ -95,10 +98,25 @@ export const MODEL_CATALOG = [
     modelId: "openai.gpt-oss-120b-1:0",
     availabilityModelId: "openai.gpt-oss-120b-1:0",
     foundationModelIds: ["openai.gpt-oss-120b-1:0"],
-    tokenCounter: { kind: "usage-only" },
+    tokenCounter: { kind: "provider-native-with-estimate" },
     pricingRouting: "in-region",
-    requestAdapter: "gpt-oss-reasoning",
+    maxOutputTokens: 16_000,
+    requestAdapter: "openai-reasoning",
     reasoning: { control: "always-on", efforts, contentVisibility: "full" },
+  },
+  {
+    key: "gpt-5-6-luna",
+    label: "GPT-5.6 Luna",
+    provider: "openai",
+    modelId: "us.openai.gpt-5.6-luna",
+    availabilityModelId: "openai.gpt-5.6-luna",
+    foundationModelIds: ["openai.gpt-5.6-luna"],
+    tokenCounter: { kind: "provider-native-with-estimate" },
+    pricingRouting: "geo-us",
+    maxOutputTokens: 16_000,
+    requestAdapter: "openai-reasoning",
+    requiresDefaultProject: true,
+    reasoning: { control: "optional", efforts, contentVisibility: "summary" },
   },
   {
     key: "glm-4-7-flash",
@@ -107,8 +125,9 @@ export const MODEL_CATALOG = [
     modelId: "zai.glm-4.7-flash",
     availabilityModelId: "zai.glm-4.7-flash",
     foundationModelIds: ["zai.glm-4.7-flash"],
-    tokenCounter: { kind: "usage-only" },
+    tokenCounter: { kind: "provider-native-with-estimate" },
     pricingRouting: "in-region",
+    maxOutputTokens: 4_096,
     requestAdapter: "glm-thinking",
     reasoning: { control: "optional", efforts: [], contentVisibility: "full" },
   },
@@ -119,10 +138,24 @@ export const MODEL_CATALOG = [
     modelId: "zai.glm-4.7",
     availabilityModelId: "zai.glm-4.7",
     foundationModelIds: ["zai.glm-4.7"],
-    tokenCounter: { kind: "usage-only" },
+    tokenCounter: { kind: "provider-native-with-estimate" },
     pricingRouting: "in-region",
+    maxOutputTokens: 4_096,
     requestAdapter: "glm-thinking",
     reasoning: { control: "optional", efforts: [], contentVisibility: "full" },
+  },
+  {
+    key: "gemini-3-5-flash",
+    label: "Gemini 3.5 Flash",
+    provider: "google",
+    modelId: "gemini-3.5-flash",
+    availabilityModelId: "gemini-3.5-flash",
+    foundationModelIds: [],
+    tokenCounter: { kind: "provider-native-with-estimate" },
+    pricingRouting: "global",
+    maxOutputTokens: 8_192,
+    requestAdapter: "gemini-thinking",
+    reasoning: { control: "optional", efforts, contentVisibility: "summary" },
   },
 ] as const satisfies readonly ModelCatalogEntry[];
 
@@ -153,9 +186,6 @@ export function parseInferenceSelection(value: unknown): InferenceSelection {
   exactKeys(inference, ["model", "reasoning"], "forwardedProps.inference");
   if (typeof inference.model !== "string") throw new Error("forwardedProps.inference.model must be a string");
   const model = modelByKey(inference.model);
-  if (model.tokenCounter.kind === "unsupported") {
-    throw new Error(`Model is disabled because exact preflight token counting is unavailable: ${model.key}`);
-  }
   const reasoning = object(inference.reasoning, "forwardedProps.inference.reasoning");
   exactKeys(reasoning, ["enabled", "effort"], "forwardedProps.inference.reasoning");
   if (typeof reasoning.enabled !== "boolean") throw new Error("forwardedProps.inference.reasoning.enabled must be a boolean");

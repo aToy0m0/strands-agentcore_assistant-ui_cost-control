@@ -4,7 +4,7 @@ import { parseRuntimeConfig, runtimeInvocationUrl, type RuntimeConfig } from "..
 const runtimeConfig = {
   environment: "test",
   debug: false,
-  ui: { name: "Workmate" },
+  ui: { name: "AIエージェント" },
   auth: {
     region: "us-east-1",
     userPoolId: "us-east-1_example",
@@ -18,6 +18,7 @@ const runtimeConfig = {
     runtimeArn: "arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/example",
     qualifier: "DEFAULT",
   },
+  features: { enabledModelKeys: ["nova-2-lite"] },
 };
 
 describe("runtimeInvocationUrl", () => {
@@ -43,7 +44,14 @@ describe("parseRuntimeConfig", () => {
   });
 
   it("UI名を必須とする", () => {
-    expect(parseRuntimeConfig(runtimeConfig).ui.name).toBe("Workmate");
+    expect(parseRuntimeConfig(runtimeConfig).ui.name).toBe("AIエージェント");
     expect(() => parseRuntimeConfig({ ...runtimeConfig, ui: { name: "" } })).toThrow("ui.name is required");
+  });
+
+  it("有効モデルキーを非空配列で必須にする", () => {
+    expect(parseRuntimeConfig({ ...runtimeConfig, features: { enabledModelKeys: ["gemini-3-5-flash"] } }).features.enabledModelKeys)
+      .toEqual(["gemini-3-5-flash"]);
+    expect(() => parseRuntimeConfig({ ...runtimeConfig, features: { enabledModelKeys: [] } })).toThrow("enabledModelKeys");
+    expect(() => parseRuntimeConfig({ ...runtimeConfig, features: { enabledModelKeys: ["unknown-model"] } })).toThrow("unknown model key");
   });
 });

@@ -374,7 +374,7 @@ export function ConversationSidebar(props: SidebarProps) {
                       onKeyDown={(event) => {
                         if (event.key === "Escape") setSearchOpen(false);
                       }}
-                      className="h-8 min-w-0 border-0 bg-transparent px-0 text-xs shadow-none focus-visible:ring-0"
+                      className="h-8 min-w-0 border-0 bg-transparent px-0 text-base shadow-none focus-visible:ring-0 md:text-xs"
                       placeholder="チャットを検索"
                     />
                     <Button
@@ -1125,7 +1125,7 @@ function ProjectDialog({
                       value={color}
                       onChange={(event) => setColor(event.target.value)}
                       aria-invalid={!validColor}
-                      className="h-9 font-mono text-xs"
+                      className="h-9 font-mono text-base md:text-xs"
                     />
                     {!validColor && (
                       <p className="text-xs text-destructive">

@@ -22,7 +22,7 @@ describe("browser debug", () => {
       image: "data:image/png;base64,AAAA",
     });
     expect(output).toHaveBeenCalledOnce();
-    expect(output.mock.calls[0]?.[0]).toBe(`[Workmate debug] test
+    expect(output.mock.calls[0]?.[0]).toBe(`[AgentCore Cost Control debug] test
 {
   "authorization": "[REDACTED]",
   "nested": {

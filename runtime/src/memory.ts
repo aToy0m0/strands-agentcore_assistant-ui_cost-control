@@ -54,10 +54,12 @@ export class AgentCoreMemory {
   constructor(
     private readonly memoryId: string,
     private readonly client: BedrockAgentCoreClient,
+    private readonly namespacePrefix: string,
   ) {}
 
-  static create(memoryId: string, region: string): AgentCoreMemory {
-    return new AgentCoreMemory(memoryId, new BedrockAgentCoreClient({ region }));
+  static create(memoryId: string, region: string, namespacePrefix: string): AgentCoreMemory {
+    if (!/^\/[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(namespacePrefix)) throw new Error("MEMORY_NAMESPACE_PREFIX is invalid");
+    return new AgentCoreMemory(memoryId, new BedrockAgentCoreClient({ region }), namespacePrefix);
   }
 
   async recordTurn(actorId: string, sessionId: string, runId: string, userText: string, assistantText: string): Promise<void> {
@@ -131,7 +133,7 @@ export class AgentCoreMemory {
   }
 
   async recallPersonalMemory(actorId: string, query: string): Promise<string[]> {
-    const namespaces = [`/workmate/${actorId}/facts`, `/workmate/${actorId}/preferences`];
+    const namespaces = [`${this.namespacePrefix}/${actorId}/facts`, `${this.namespacePrefix}/${actorId}/preferences`];
     const pages = await Promise.all(namespaces.map((namespace) => this.client.send(new RetrieveMemoryRecordsCommand({
       memoryId: this.memoryId,
       namespace,

@@ -1,52 +1,37 @@
-# セキュリティ上の注意と既知の制約
+# セキュリティと運用上の境界
 
-最終更新日: 2026-09-01
+## 実装済み
 
-本リポジトリは研究・学習用途のサンプルです。詳細な脅威モデルは[SECURITY.md](../SECURITY.md)を参照してください。
-
-## 実装済みの境界
-
-- AgentCore RuntimeとGatewayはCognito JWT Authorizerで保護する
-- User Poolの自己登録を無効にし、App Clientのログイン方式も設定値に合わせて制限する
-- JWT Authorizer検証後のアクセストークン`sub`をユーザーIDとして固定する
-- Bedrock推論対象を、料金表とBedrock usageによる実績精算が可能な8モデルに限定する
-- 全8モデルで最大出力の月額費用をDynamoDBトランザクションにより事前予約する
-- Cognitoグループ別に、日次・週次・月次のユーザートークン枠を同じトランザクションで予約し、入力分は実行後に加算する
-- 未知モデル、未知プロファイル、複数プロファイル割り当てではLLMを呼ばない
+- Cognito JWT Authorizer検証後の`sub`を監査用actor IDとして使用する
+- UI、Runtime入力検証、Bedrock IAMへ同じモデルallowlistを適用する
+- Gemini APIキーとEntraクライアントシークレットはSecrets Managerから取得し、configへ本文を書かない
+- Knowledge Baseの`bedrock:Retrieve`をconfigで有効なARNへ限定する
+- Gatewayターゲットはコード側カタログに登録した実装だけをconfigから有効化する
 - S3を非公開にし、Web配信はCloudFront OACだけを許可する
+- RuntimeはVersioning付きS3価格表を読み取り、書き換えない
+- 価格照合Lambdaは警告だけを出し、価格表や実行可否を変更しない
+- 費用実績は`usageEventId`で冪等に加算する
+- usage不明時は金額を推定せず`USAGE_UNAVAILABLE`として記録する
+- CloudWatch Logsの保持日数を環境configで指定する
 
-`runtime-config.json`に含まれるUser Pool ID、App Client ID、Cognitoドメイン、Runtime ARNはpublic App Clientの接続情報であり、秘密情報ではありません。
+## ソフト上限の限界
 
-## 未実装または対象外の防御
+月額上限はAWS請求を止めるハードリミットではない。モデル以外のAgentCore、Memory、KMS、CloudFront、Logsなどは対象外であり、AWS BudgetsやCost Anomaly Detectionを別途使用する。
 
-| 項目 | 現状 | 影響 |
-|---|---|---|
-| WAF・短時間レート制限 | 未実装 | 費用・トークン上限内での連投による可用性影響は防げない |
-| Bedrock Guardrails | 未実装 | 禁止トピック、PII、プロンプト攻撃を専用機能で遮断しない |
-| セキュリティレスポンスヘッダー | CSP、HSTS、frame-ancestors等が未設定 | XSSやクリックジャッキングへの多層防御が不足 |
-| CloudFrontアクセスログ | 未設定 | 配信経路の追跡性が不足 |
-| ログのKMS暗号化・Data Protection | 未設定 | Runtimeログの本文保護は設定による出力停止と短期保持に依存 |
-| httpOnly Cookie | BFFを持たないため未対応 | JWTはAmplify既定のブラウザストレージにあり、XSS時に露出し得る |
-| LLM以外のAWS費用hard limit | 対象外 | Runtime、Memory、KMS、CloudFront、Logs等はAWS Budgets等で別途監視が必要 |
-| 全モデルの入力費用 | ソフト制限 | 1回の呼び出し、または同時実行分だけ設定上限を超える可能性がある |
-| 予約障害の照合ジョブ | 未実装 | Bedrock送信後にusageを取得できない場合、予約を安全側で保持し続ける |
+予約を持たないため、同時に開始したモデル呼び出しの実費分だけ上限を超える可能性がある。運用を単純にする設計上のトレードオフである。より厳密な同時実行制御が必要になった場合に限り、予約方式を再検討する。
 
-## ユーザー上限の安全側動作
+## ログ
 
-- グループ未所属だけは既定プロファイルを適用する
-- `workmate-limit-*`へ複数所属している場合は認証エラーにする
-- 削除済み・未知のプロファイルIDは既定へフォールバックしない
-- プロファイル変更は既存アクセストークンへ反映されないため再ログインが必要
-- 同一ウィンドウ中に同じプロファイルIDの上限値を変更すると、既存台帳との不一致により安全側で停止する
+`runtimeLogRequest`、`runtimeLogModel`、`runtimeLogTool`は本文を含み得る。本番では必要な種類だけを有効にする。費用ログは単価、価格表版、S3 Version ID、トークン数を含むが、プロンプト本文を必要としない。
 
-## 検証範囲
+開発環境は短期保持、本番は180日など、`logRetentionDays`を監査要件に合わせる。より長期または改ざん耐性が必要なら、別途監査用S3集約を設計する。
 
-型検査、lint、Webビルド、Runtime CodeZip生成、単体テスト、CDK assertion、CDK synthをローカルで確認しています。実設定から3つのCognitoグループとRuntime環境変数が合成されることも確認済みです。
+## 実環境で確認する項目
 
-次は未確認です。
-
-- 本サンプルスタックのAWSデプロイ
-- 実際のCognitoアクセストークンを使ったグループ割り当てE2E
-- 実Bedrockでの日次・週次・月次上限到達試験
-- 利用者が設定した独自ドメインと証明書によるHTTPS疎通
-- 障害時の予約照合・運用復旧
+- 有効モデルごとの呼び出しとCountTokens経路
+- Geminiシークレットへの最小権限アクセス
+- 複数Knowledge BaseとGatewayターゲットの呼び分け
+- 月額上限到達と、`NO_CHARGE`・`USAGE_UNAVAILABLE`の分類
+- 価格不一致警告とCloudWatch Alarm
+- 独自ドメイン利用時の`us-east-1` ACM証明書
+- スマートフォンでの表示、横スワイプによるメニュー操作、入力時の拡大抑止

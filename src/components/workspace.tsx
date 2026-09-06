@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import { fetchAuthSession, signOut } from "aws-amplify/auth";
 import { useTheme } from "next-themes";
 import { LogOut, Maximize2, Menu, Minimize2, Settings, UserRound } from "lucide-react";
@@ -6,6 +6,8 @@ import { toast } from "sonner";
 import type { RuntimeConfig } from "@/config";
 import { createAgentProfile } from "@/lib/agents";
 import { userViewFromIdTokenClaims } from "@/lib/current-user";
+import { isMobileSidebarOpeningSwipe, type SwipePoint } from "@/lib/mobile-sidebar-gesture";
+import { resolveAppViewport, type AppViewport } from "@/lib/visual-viewport";
 import { cn } from "@/lib/utils";
 import { AgUiRuntimeProvider } from "./runtime/ag-ui-runtime-provider";
 import { ChatThread } from "./chat-thread";
@@ -26,7 +28,23 @@ export function Workspace({ config, onSignedOut }: { config: RuntimeConfig; onSi
   const [currentUser, setCurrentUser] = useState<UserView>();
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string>();
+  const [appViewport, setAppViewport] = useState<AppViewport>();
+  const swipeStart = useRef<SwipePoint | undefined>(undefined);
   const selectedProject = projects.find((project) => project.id === selectedProjectId);
+
+  function startSidebarSwipe(event: ReactPointerEvent<HTMLDivElement>) {
+    if (event.pointerType !== "touch" || mobileSidebarOpen || immersive) return;
+    swipeStart.current = { x: event.clientX, y: event.clientY };
+  }
+
+  function finishSidebarSwipe(event: ReactPointerEvent<HTMLDivElement>) {
+    const start = swipeStart.current;
+    swipeStart.current = undefined;
+    if (!start || event.pointerType !== "touch") return;
+    if (isMobileSidebarOpeningSwipe(start, { x: event.clientX, y: event.clientY }, window.innerWidth)) {
+      setMobileSidebarOpen(true);
+    }
+  }
 
   async function signOutOfWorkspace() {
     try {
@@ -42,17 +60,47 @@ export function Workspace({ config, onSignedOut }: { config: RuntimeConfig; onSi
     void fetchAuthSession().then((session) => setCurrentUser(userViewFromIdTokenClaims(session.tokens?.idToken?.payload))).catch((cause: unknown) => toast.error(cause instanceof Error ? cause.message : "ユーザー情報を取得できませんでした"));
     const feedback = () => toast.success("フィードバックはこの簡易構成では保存されません");
     const runtimeError = (event: Event) => toast.error(`AG-UIエラー: ${(event as CustomEvent<string>).detail}`);
-    window.addEventListener("workmate-feedback", feedback);
-    window.addEventListener("workmate-error", runtimeError);
+    window.addEventListener("agent-feedback", feedback);
+    window.addEventListener("agent-error", runtimeError);
     return () => {
-      window.removeEventListener("workmate-feedback", feedback);
-      window.removeEventListener("workmate-error", runtimeError);
+      window.removeEventListener("agent-feedback", feedback);
+      window.removeEventListener("agent-error", runtimeError);
     };
   }, []);
 
+  useEffect(() => {
+    const visualViewport = window.visualViewport;
+    const update = () => setAppViewport(resolveAppViewport(
+      window.innerHeight,
+      visualViewport ? { height: visualViewport.height, offsetTop: visualViewport.offsetTop } : undefined,
+      window.matchMedia("(max-width: 767px)").matches,
+    ));
+    update();
+    window.addEventListener("resize", update, { passive: true });
+    visualViewport?.addEventListener("resize", update, { passive: true });
+    visualViewport?.addEventListener("scroll", update, { passive: true });
+    return () => {
+      window.removeEventListener("resize", update);
+      visualViewport?.removeEventListener("resize", update);
+      visualViewport?.removeEventListener("scroll", update);
+    };
+  }, []);
+
+  const viewportStyle = appViewport ? {
+    height: `${appViewport.height}px`,
+    top: `${appViewport.offsetTop}px`,
+  } satisfies CSSProperties : undefined;
+
   return (
     <AgUiRuntimeProvider config={config}>
-      <div className="flex h-dvh w-full bg-background text-foreground">
+      <div
+        className="fixed inset-x-0 top-0 flex h-dvh w-full max-w-full overflow-hidden bg-background text-foreground"
+        style={viewportStyle}
+        data-keyboard-open={appViewport?.keyboardOpen ? "true" : "false"}
+        onPointerDown={startSidebarSwipe}
+        onPointerUp={finishSidebarSwipe}
+        onPointerCancel={() => { swipeStart.current = undefined; }}
+      >
         <div className={immersive ? "hidden" : "contents"}>
           <ConversationSidebar
             open={sidebarOpen} mobileOpen={mobileSidebarOpen}
@@ -64,13 +112,13 @@ export function Workspace({ config, onSignedOut }: { config: RuntimeConfig; onSi
             onSignOut={() => void signOutOfWorkspace()}
           />
         </div>
-        <main className="relative flex min-w-0 flex-1 flex-col">
+        <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <header className={cn("relative flex h-13 shrink-0 items-center justify-between px-3 sm:px-4", !immersive && "border-b")}>
             {!immersive && <button type="button" className="grid size-9 place-items-center rounded-lg hover:bg-accent md:hidden" aria-label="会話メニューを開く" onClick={() => setMobileSidebarOpen(true)}><Menu className="size-5" /></button>}
             {!immersive && <div className="absolute left-1/2 top-2 -translate-x-1/2 rounded-full bg-muted px-5 py-2 text-xs font-semibold">{agent.name}</div>}
             <button type="button" className="ml-auto grid size-9 place-items-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground" aria-label={immersive ? "全画面を終了" : "全画面表示"} onClick={() => setImmersive((value) => !value)}>{immersive ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}</button>
           </header>
-          <ChatThread agent={agent} selectedProject={selectedProject} onClearSelectedProject={() => setSelectedProjectId(undefined)} />
+          <ChatThread agent={agent} selectedProject={selectedProject} keyboardOpen={appViewport?.keyboardOpen === true} onClearSelectedProject={() => setSelectedProjectId(undefined)} />
         </main>
         <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} config={config} onSignOut={() => void signOutOfWorkspace()} />
         <Toaster sidebarWidth={immersive ? 0 : sidebarOpen ? 238 : 48} />
@@ -84,7 +132,7 @@ function SettingsDialog({ open, onOpenChange, config, onSignOut }: { open: boole
   const agent = createAgentProfile(config.ui.name);
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="min-h-[500px] overflow-hidden p-0">
+      <DialogContent className="min-h-0 overflow-y-auto p-0 sm:min-h-[500px] sm:overflow-hidden">
         <header className="border-b px-6 py-5">
           <p className="text-[10px] font-semibold uppercase tracking-widest text-agent">Workspace</p>
           <DialogTitle className="text-xl font-semibold">設定</DialogTitle>
@@ -119,5 +167,5 @@ function SettingsDialog({ open, onOpenChange, config, onSignOut }: { open: boole
 }
 
 function ConnectionField({ id, label, value }: { id: string; label: string; value: string }) {
-  return <div className="space-y-1"><label htmlFor={id} className="text-xs text-muted-foreground">{label}</label><Input id={id} value={value} readOnly className="h-9 bg-muted/50 text-xs" /></div>;
+  return <div className="space-y-1"><label htmlFor={id} className="text-xs text-muted-foreground">{label}</label><Input id={id} value={value} readOnly className="h-9 bg-muted/50 text-base md:text-xs" /></div>;
 }

@@ -1,5 +1,6 @@
 import { Amplify } from "aws-amplify";
 
+import { parseEnabledModelKeys } from "../shared/deployment-resources.js";
 import {
   isLoginMethods,
   showsCognitoLogin as showsCognitoFor,
@@ -7,6 +8,7 @@ import {
   LOGIN_METHOD_VALUES,
   type LoginMethods,
 } from "../shared/login-methods.js";
+import { MODEL_CATALOG } from "../shared/model-catalog.js";
 
 export type { LoginMethods };
 
@@ -24,6 +26,7 @@ export type RuntimeConfig = {
     loginMethods: LoginMethods;
   };
   agent: { runtimeArn: string; qualifier: string };
+  features: { enabledModelKeys: string[] };
 };
 
 export function showsCognitoLogin(config: RuntimeConfig): boolean {
@@ -50,6 +53,7 @@ export function parseRuntimeConfig(input: unknown): RuntimeConfig {
   required(value.auth?.cognitoDomain, "auth.cognitoDomain");
   required(value.agent?.runtimeArn, "agent.runtimeArn");
   required(value.agent?.qualifier, "agent.qualifier");
+  const enabledModelKeys = parseEnabledModelKeys(value.features?.enabledModelKeys, MODEL_CATALOG.map((model) => model.key));
   if (typeof value.auth.entraEnabled !== "boolean") throw new Error("auth.entraEnabled must be a boolean");
   if (value.auth.entraEnabled && !value.auth.entraProviderName) throw new Error("auth.entraProviderName is required when Entra is enabled");
   if (!isLoginMethods(value.auth.loginMethods)) {
@@ -58,7 +62,7 @@ export function parseRuntimeConfig(input: unknown): RuntimeConfig {
   if (value.auth.loginMethods !== "cognito" && !value.auth.entraEnabled) {
     throw new Error(`auth.loginMethods=${value.auth.loginMethods} requires auth.entraEnabled`);
   }
-  return value;
+  return { ...value, features: { enabledModelKeys } };
 }
 
 export async function loadRuntimeConfig(): Promise<RuntimeConfig> {

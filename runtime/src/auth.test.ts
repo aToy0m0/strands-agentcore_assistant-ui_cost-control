@@ -10,14 +10,9 @@ describe("actorIdFromAuthorization", () => {
     expect(actorIdFromAuthorization(token({ sub: "cognito-user-sub" }))).toBe("cognito-user-sub");
   });
 
-  it("上限プロファイル用Cognitoグループを取得する", () => {
-    expect(identityFromAuthorization(token({ sub: "user-1", "cognito:groups": ["other", "workmate-limit-weekly"] })))
-      .toEqual({ actorId: "user-1", limitProfileId: "weekly" });
-  });
-
-  it("複数の上限プロファイル割り当てを拒否する", () => {
-    expect(() => identityFromAuthorization(token({ sub: "user-1", "cognito:groups": ["workmate-limit-weekly", "workmate-limit-daily"] })))
-      .toThrow(AuthenticationError);
+  it("Cognitoグループは費用上限の判定に使わない", () => {
+    expect(identityFromAuthorization(token({ sub: "user-1", "cognito:groups": ["other"] })))
+      .toEqual({ actorId: "user-1" });
   });
 
   it.each([undefined, "Basic abc", "Bearer malformed", token({})])("rejects an unusable token: %s", (authorization) => {

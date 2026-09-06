@@ -29,13 +29,13 @@ UIはCognitoで認証し、ブラウザからAgentCore Runtimeへ直接AG-UIリ�
 | 入力 | 音声入力 | Web Speech APIによる日本語の連続音声入力 |
 | 出力 | Markdown | GFM対応Markdown、コード、リンクなどを表示 |
 | 出力 | 音声読み上げ | Web Speech APIの読み上げAdapterを提供 |
-| 推論 | モデル選択 | 8モデルから実行モデルを選択し、ハード／ソフト制限を表示 |
+| 推論 | モデル選択 | BedrockモデルとGeminiから実行モデルを選択し、アプリ月額上限の事前判定を表示 |
 | 推論 | Reasoning設定 | ON/OFFと対応モデルのLow・Medium・Highを選択 |
 | 推論 | 料金表示 | モデルごとの100万トークン単価を選択UIに表示 |
-| 表示 | レスポンシブUI | デスクトップの開閉サイドバーとモバイルドロワー |
+| 表示 | レスポンシブUI | デスクトップの開閉サイドバーとモバイルドロワー。モバイルはVisual Viewportに追従してソフトウェアキーボード表示時も会話とComposerを表示領域へ収める |
 | 表示 | 没入表示 | サイドバーとヘッダーを隠してチャットへ集中 |
 | 表示 | テーマ | システム、ライト、ダークを選択 |
-| 表示 | 通知 | 認証、履歴、AG-UI、添付、カメラなどの結果をトースト表示 |
+| 表示 | 通知 | 認証、履歴、添付、カメラなどの結果をトースト表示。AG-UI実行エラーは会話内だけに表示 |
 | 診断 | ブラウザデバッグ | デプロイ時にON/OFFを切り替え、HTTP・SSE・履歴・AG-UIイベントをConsoleへ出力 |
 
 ## 認証とRuntime接続
@@ -163,16 +163,16 @@ AG-UIエラー: Unexpected token 'd', "data: {"co"... is not valid JSON
 - 会話本文とツール利用は完了している。
 - 同時間帯のRuntimeログに`Unexpected token`は記録されていない。
 - 同時間帯のRuntimeログに`invocation.failed`は記録されていない。
-- トーストは`useAgUiRuntime`の`onError`から`workmate-error`イベントを経由して表示される。
+- トーストは`useAgUiRuntime`の`onError`から`agent-error`イベントを経由して表示される。
 - 例外文字列はSSEの`data:`行をJSON本体として解析した場合の形式と一致する。
 
 以上から、RuntimeやGatewayの処理失敗ではなく、ブラウザ側のSSEイベント解析またはストリーム終端処理で発生する表示上の問題である可能性が高い状態です。ただし、該当リクエストのブラウザNetworkレスポンスを未採取のため、二重SSE化、終端チャンク、クライアントライブラリのいずれが原因かは未確定です。
 
 再調査時は、発生したリクエストのResponse Headers、レスポンス先頭と末尾、ブラウザConsole、発生時刻を採取し、`text/event-stream`と各`data:`行の境界を確認します。会話が完了したという理由だけでエラー通知を握りつぶす修正は行いません。
 
-この調査のため、CDKコンテキスト`webDebugMode=on`でブラウザデバッグを有効化できます。ON時はAG-UIクライアント標準のevent／lifecycleログと、アプリ独自の`[Workmate debug]`ログをConsoleへ出します。設定画面の「接続」タブでも現在値を確認できます。既定はOFFで、`webDebugMode=off`を指定した再デプロイにより無効化できます。
+この調査のため、CDKコンテキスト`webDebugMode=on`でブラウザデバッグを有効化できます。ON時はAG-UIクライアント標準のevent／lifecycleログと、アプリ独自の`[AgentCore Cost Control debug]`ログをConsoleへ出します。設定画面の「接続」タブでも現在値を確認できます。既定はOFFで、`webDebugMode=off`を指定した再デプロイにより無効化できます。
 
-`[Workmate debug]`のデータは整形済みJSON文字列で出力するため、DevTools上で`Object`へ折りたたまれず、そのままコピーできます。履歴APIがAgentCoreのSSEエラーを返した場合はContent-Typeを判定し、JSON解析エラーではなく`RUN_ERROR`のメッセージを表示します。
+`[AgentCore Cost Control debug]`のデータは整形済みJSON文字列で出力するため、DevTools上で`Object`へ折りたたまれず、そのままコピーできます。履歴APIがAgentCoreのSSEエラーを返した場合はContent-Typeを判定し、JSON解析エラーではなく`RUN_ERROR`のメッセージを表示します。
 
 デバッグログはAuthorization、トークン、シークレット、パスワード、Base64添付をマスクします。ただし会話本文、履歴、ツール引数・結果、生のSSE本文は表示します。利用手順と注意事項は[デプロイ手順書の「ブラウザデバッグモード」](deployment-guide.md#ブラウザデバッグモード)を参照してください。
 

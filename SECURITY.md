@@ -1,4 +1,4 @@
-# セキュリティドキュメント — Strands AgentCore + assistant-ui Cost Control
+# セキュリティドキュメント — AgentCore Cost Control
 
 このドキュメントは、本サンプルの脅威モデル、実装済みのセキュリティ統制、未実装の統制、責任分界、データ分類、リスク評価をまとめたものです。
 
@@ -44,7 +44,7 @@ S3デプロイ用のカスタムリソースLambdaはCloudFormation実行時に�
 | **Information Disclosure** | AgentCore Memory | 他ユーザーの履歴・個人記憶の参照 | JWT Authorizer検証済みトークンの`sub`をRuntimeで`actorId`に固定。MemoryはCMKで暗号化 | 実装済み |
 | **Information Disclosure** | `runtime-config.json` | User Pool IDとApp Client IDの公開 | public App Clientの仕様上そもそも秘密情報ではない。SPAである以上隠蔽できない | 設計上の受容 |
 | **Information Disclosure** | ブラウザ | XSS発生時のトークン露出 | — | **未実装**（CSP等のレスポンスヘッダー未設定。httpOnly Cookie化には本構成が排除したBFFが必要） |
-| **Denial of Service** | AgentCore Runtime | 認証済み利用者による無制限のBedrock呼び出し | 全8モデルのsoft limit、Cognitoグループ別ユーザートークン上限、DynamoDBの原子的予約 | 実装済み（時間当たりのリクエストレート制限は未実装） |
+| **Denial of Service** | AgentCore Runtime | 認証済み利用者による無制限のモデル呼び出し | アプリ単位のソフト月額上限。入力見積りで事前判定し、完了後のusageをDynamoDBへ冪等に記録 | 実装済み（時間当たりのリクエストレート制限は未実装） |
 | **Elevation of Privilege** | IAMロール | 過剰な権限 | Runtimeロールをモデル・ログ・成果物・Memoryに、Gatewayロールを対象ツールLambdaの実行に限定 | 実装済み |
 
 ### 攻撃面
@@ -171,7 +171,7 @@ Runtime実行ロールとGateway実行ロールの権限を用途別に分離し
 - Runtime実行ロールはモデルARN、ログ、成果物バケットと対象Memoryに限定する
 - `networkMode`は`PUBLIC`。本番ではPRIVATEを検討する
 - セッションは`idleRuntimeSessionTimeout` 300秒、`maxLifetime` 1800秒
-- 短期記憶は30日間保持する。長期記憶は`/workmate/{actorId}/facts`と`/workmate/{actorId}/preferences`へユーザー単位で抽出する
+- 短期記憶は30日間保持する。長期記憶は`/<defaultCdkPrefix>/{actorId}/facts`と`/<defaultCdkPrefix>/{actorId}/preferences`へユーザー単位で抽出する
 - Memoryはキーローテーションを有効にしたカスタマーマネージドKMSキーで暗号化する
 
 ### Amazon S3 / Amazon CloudFront
@@ -247,7 +247,8 @@ aws accessanalyzer list-analyzers --region us-east-1
 
 ## 検証範囲
 
-- Microsoft Entra ID連携は、利用するテナントで管理者同意、一般ユーザー、グループ割り当て、ログアウト、トークン更新を含むE2E検証が必要
+- Microsoft Entra IDとのSSO連携は2026-08-16に実テナントで疎通確認済み。Identity Providerの作成、テナント全体の管理者同意、Entra経由のログイン、AgentCore RuntimeへのJWT到達（ツール実行を含む応答完了）まで確認した。**確認は管理者アカウント1件のみ**
+- 管理者以外の一般ユーザーによるログインは未確認
 - 自動テストは設定・ユーティリティ層とRuntimeの単体・結合テストのみ。UIコンポーネントテストとE2Eテストはない
 - 脆弱性診断、ペネトレーションテスト、負荷試験は実施していない
 

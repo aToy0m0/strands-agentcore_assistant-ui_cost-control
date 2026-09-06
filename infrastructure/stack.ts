@@ -1,6 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { CfnOutput, CfnParameter, Duration, Fn, RemovalPolicy, SecretValue, Stack, Tags, type StackProps } from "aws-cdk-lib";
+import { CfnOutput, Duration, Fn, RemovalPolicy, SecretValue, Stack, Tags, type StackProps } from "aws-cdk-lib";
 import { Certificate } from "aws-cdk-lib/aws-certificatemanager";
 import {
   CfnRuntime,
@@ -15,12 +15,12 @@ import {
   ToolSchema,
 } from "aws-cdk-lib/aws-bedrockagentcore";
 import { AllowedMethods, CachePolicy, Distribution, PriceClass, SecurityPolicyProtocol, ViewerProtocolPolicy } from "aws-cdk-lib/aws-cloudfront";
+import { Alarm, ComparisonOperator, Dashboard, GraphWidget, SingleValueWidget, TreatMissingData } from "aws-cdk-lib/aws-cloudwatch";
 import { S3BucketOrigin } from "aws-cdk-lib/aws-cloudfront-origins";
 import { ARecord, HostedZone, RecordTarget } from "aws-cdk-lib/aws-route53";
 import { CloudFrontTarget } from "aws-cdk-lib/aws-route53-targets";
 import {
   AccountRecovery,
-  CfnUserPoolGroup,
   CfnUserPoolClient,
   CfnUserPoolIdentityProvider,
   OAuthScope,
@@ -32,21 +32,61 @@ import { Key } from "aws-cdk-lib/aws-kms";
 import { Code, Function as LambdaFunction, Runtime } from "aws-cdk-lib/aws-lambda";
 import { Rule, Schedule } from "aws-cdk-lib/aws-events";
 import { LambdaFunction as LambdaTarget } from "aws-cdk-lib/aws-events-targets";
-import { TriggerFunction } from "aws-cdk-lib/triggers";
 import { BlockPublicAccess, Bucket, BucketEncryption } from "aws-cdk-lib/aws-s3";
+import { Secret } from "aws-cdk-lib/aws-secretsmanager";
 import { BucketDeployment, Source } from "aws-cdk-lib/aws-s3-deployment";
-import { LogGroup, RetentionDays } from "aws-cdk-lib/aws-logs";
+import { FilterPattern, LogGroup, MetricFilter, RetentionDays } from "aws-cdk-lib/aws-logs";
 import { LoggingDestination, LogType, configureLoggingDelivery } from "aws-cdk-lib/aws-bedrockagentcore";
 import { AttributeType, BillingMode, Table } from "aws-cdk-lib/aws-dynamodb";
 import { AwsCustomResource, AwsCustomResourcePolicy, PhysicalResourceId } from "aws-cdk-lib/custom-resources";
 import type { Construct } from "constructs";
 import { COST_CONTROLLED_MODEL_CATALOG } from "../shared/model-catalog.js";
 import { resolveLoginMethods, showsCognitoLogin, showsEntraLogin } from "../shared/login-methods.js";
-import { defaultUserLimitProfile, parseUserLimitProfiles } from "../shared/user-limit-profiles.js";
-import { INITIAL_MODEL_PRICING } from "../shared/initial-model-pricing.js";
+import { MODEL_PRICING_CATALOG } from "../shared/initial-model-pricing.js";
+import {
+  assertKnowledgeBaseRegions,
+  parseEnabledModelKeys,
+  parseGatewayLambdaTargets,
+  parseKnowledgeBases,
+} from "../shared/deployment-resources.js";
+import { cognitoDomainPrefix, resolveResourceNames, resolveRuntimeDisplayName } from "./naming.js";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const entraProviderName = "MicrosoftEntraID";
+
+const gatewayToolCatalog = {
+  "support-directory": {
+    constructId: "SupportDirectory",
+    functionNameSuffix: "support-directory-tool",
+    description: "Read-only support contact lookup",
+    assetDirectory: "gateway-tool",
+    targetName: "SupportDirectory",
+    targetDescription: "Looks up the contact address and business hours for a support department",
+    toolSchema: () => ToolSchema.fromInline([{
+      name: "lookup_support_contact",
+      description: "Look up the email address and business hours for sales, support, or billing.",
+      inputSchema: {
+        type: SchemaDefinitionType.OBJECT,
+        properties: {
+          department: {
+            type: SchemaDefinitionType.STRING,
+            description: "Department name: sales, support, or billing.",
+          },
+        },
+        required: ["department"],
+      },
+      outputSchema: {
+        type: SchemaDefinitionType.OBJECT,
+        properties: {
+          department: { type: SchemaDefinitionType.STRING },
+          email: { type: SchemaDefinitionType.STRING },
+          hours: { type: SchemaDefinitionType.STRING },
+        },
+        required: ["department", "email", "hours"],
+      },
+    }]),
+  },
+} as const;
 
 /** CloudWatch Logsが受け付ける保持日数。ここにない値はCloudFormationが拒否する。 */
 const RETENTION_BY_DAYS = new Map<number, RetentionDays>(
@@ -108,52 +148,53 @@ export function decodeBase64UrlContext(configured: unknown, name: string): strin
   return decoded;
 }
 
-export function resolveResourceNamePrefix(configured: unknown): string {
-  if (typeof configured !== "string" || !/^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/u.test(configured)) {
-    throw new Error("resourceNamePrefix must be 1-32 lowercase letters, numbers, or hyphens and cannot end with a hyphen");
-  }
-  return configured;
-}
-
-export function resolveUiName(configured: unknown): string {
-  if (typeof configured !== "string") throw new Error("uiName is required");
-  const value = configured.trim();
-  if (!value || value.length > 64 || Array.from(value).some((character) => character.codePointAt(0)! < 32 || character.codePointAt(0) === 127)) {
-    throw new Error("uiName must be 1-64 visible characters");
-  }
-  return value;
-}
-
 function contextString(scope: Construct, name: string): string {
   const value = scope.node.tryGetContext(name);
   if (typeof value !== "string" || !value.trim()) throw new Error(`CDK context ${name} is required`);
   return value.trim();
 }
 
-export class WorkmateCostControlStack extends Stack {
+export class AgentCoreCostControlStack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
     super(scope, id, props);
 
     const entraEnabledValue = this.node.tryGetContext("entraEnabled");
     const entraEnabled = entraEnabledValue === true || entraEnabledValue === "true";
     const loginMethods = resolveLoginMethods(this.node.tryGetContext("loginMethods"), entraEnabled);
-    const resourceNamePrefix = resolveResourceNamePrefix(this.node.tryGetContext("resourceNamePrefix"));
-    const runtimeNamePrefix = resourceNamePrefix.replace(/-/gu, "_");
-    const uiName = resolveUiName(this.node.tryGetContext("uiName"));
-    Tags.of(this).add("CostGroup", resourceNamePrefix);
-    const configuredDomainPrefix = this.node.tryGetContext("cognitoDomainPrefix");
-    if (configuredDomainPrefix !== undefined && (typeof configuredDomainPrefix !== "string" || !/^[a-z0-9-]{1,63}$/.test(configuredDomainPrefix))) {
-      throw new Error("cognitoDomainPrefix must contain only lowercase letters, numbers, and hyphens");
-    }
-    const domainPrefix = typeof configuredDomainPrefix === "string" ? configuredDomainPrefix : `${resourceNamePrefix.replace(/-/gu, "")}-${this.account}`;
+    const names = resolveResourceNames(this.node.tryGetContext("defaultCdkPrefix"));
+    const runtimeDisplayName = resolveRuntimeDisplayName(this.node.tryGetContext("runtimeDisplayName"));
+    Tags.of(this).add("Application", names.base);
+    Tags.of(this).add("CostGroup", names.base);
+    const domainPrefix = cognitoDomainPrefix(names);
     const logRetention = resolveLogRetention(this.node.tryGetContext("logRetentionDays"));
     const runtimeLogEnvironment = runtimeLogSettings(this);
     const webDebugMode = resolveWebDebugMode(this.node.tryGetContext("webDebugMode"));
-    const accountBudgetNanoUsd = resolveMonthlyBudgetNanoUsd(this.node.tryGetContext("accountMonthlyBudgetUsd"), "100", "accountMonthlyBudgetUsd");
-    const projectBudgetNanoUsd = resolveMonthlyBudgetNanoUsd(this.node.tryGetContext("projectMonthlyBudgetUsd"), "60", "projectMonthlyBudgetUsd");
-    const encodedUserLimitProfiles = decodeBase64UrlContext(this.node.tryGetContext("userLimitProfilesBase64"), "userLimitProfilesBase64");
-    const userLimitProfiles = parseUserLimitProfiles(encodedUserLimitProfiles ?? this.node.tryGetContext("userLimitProfiles"));
-    const userLimitProfilesJson = JSON.stringify(userLimitProfiles);
+    const monthlyBudgetNanoUsd = resolveMonthlyBudgetNanoUsd(this.node.tryGetContext("monthlyBudgetUsd"), "60", "monthlyBudgetUsd");
+    const budgetScopeId = names.base;
+    const priceVerificationEnabledValue = this.node.tryGetContext("priceVerificationEnabled");
+    if (priceVerificationEnabledValue !== undefined && ![true, false, "true", "false"].includes(priceVerificationEnabledValue)) {
+      throw new Error("priceVerificationEnabled must be true or false");
+    }
+    const priceVerificationEnabled = priceVerificationEnabledValue === true || priceVerificationEnabledValue === "true";
+    const encodedKnowledgeBases = decodeBase64UrlContext(this.node.tryGetContext("knowledgeBasesBase64"), "knowledgeBasesBase64");
+    const knowledgeBases = parseKnowledgeBases(encodedKnowledgeBases ?? this.node.tryGetContext("knowledgeBases"));
+    const knowledgeBasesJson = JSON.stringify(knowledgeBases);
+    const allowCrossRegionKnowledgeBases = this.node.tryGetContext("allowCrossRegionKnowledgeBases") === true
+      || this.node.tryGetContext("allowCrossRegionKnowledgeBases") === "true";
+    assertKnowledgeBaseRegions(knowledgeBases, this.region, allowCrossRegionKnowledgeBases);
+    const encodedGatewayTargets = decodeBase64UrlContext(this.node.tryGetContext("gatewayTargetsBase64"), "gatewayTargetsBase64");
+    const gatewayTargets = parseGatewayLambdaTargets(encodedGatewayTargets ?? this.node.tryGetContext("gatewayTargets"));
+    const encodedEnabledModelKeys = decodeBase64UrlContext(this.node.tryGetContext("enabledModelKeysBase64"), "enabledModelKeysBase64");
+    const enabledModelKeys = parseEnabledModelKeys(
+      encodedEnabledModelKeys ?? this.node.tryGetContext("enabledModelKeys"),
+      COST_CONTROLLED_MODEL_CATALOG.map((model) => model.key),
+    );
+    const geminiEnabledValue = this.node.tryGetContext("geminiEnabled");
+    const geminiEnabled = geminiEnabledValue === true || geminiEnabledValue === "true";
+    const geminiApiKeySecretName = geminiEnabled ? contextString(this, "geminiApiKeySecretName") : undefined;
+    if (enabledModelKeys.includes("gemini-3-5-flash") && !geminiEnabled) {
+      throw new Error("enabledModelKeys includes gemini-3-5-flash but geminiEnabled is false");
+    }
     const customDomainEnabledValue = this.node.tryGetContext("customDomainEnabled");
     const customDomainEnabled = customDomainEnabledValue === true || customDomainEnabledValue === "true";
     let customDomainName: string | undefined;
@@ -176,13 +217,6 @@ export class WorkmateCostControlStack extends Stack {
       hostedZone = HostedZone.fromHostedZoneAttributes(this, "ExistingHostedZone", { hostedZoneId, zoneName: hostedZoneName });
       certificate = Certificate.fromCertificateArn(this, "ExistingCertificate", certificateArn);
     }
-    const knowledgeBaseId = new CfnParameter(this, "KnowledgeBaseId", {
-      type: "String",
-      allowedPattern: "[0-9A-Z]{10}",
-      constraintDescription: "must be a 10-character uppercase alphanumeric Bedrock Knowledge Base ID",
-      description: "Existing Bedrock Knowledge Base used by the runtime search tool",
-    });
-
     const webBucket = new Bucket(this, "WebAssets", {
       encryption: BucketEncryption.S3_MANAGED,
       blockPublicAccess: BlockPublicAccess.BLOCK_ALL,
@@ -228,7 +262,7 @@ export class WorkmateCostControlStack extends Stack {
     }
 
     const userPool = new UserPool(this, "UserPool", {
-      userPoolName: "workmate-cost-control-users",
+      userPoolName: names.userPoolName,
       selfSignUpEnabled: false,
       signInAliases: { email: true },
       signInCaseSensitive: false,
@@ -241,14 +275,6 @@ export class WorkmateCostControlStack extends Stack {
     const userPoolDomain = userPool.addDomain("Domain", {
       cognitoDomain: { domainPrefix },
     });
-    for (const profile of userLimitProfiles) {
-      new CfnUserPoolGroup(this, `UserLimitGroup${profile.id.replace(/(^|-)([a-z0-9])/gu, (_match, _separator, character: string) => character.toUpperCase())}`, {
-        userPoolId: userPool.userPoolId,
-        groupName: `workmate-limit-${profile.id}`,
-        description: `${profile.window} token limit: ${profile.tokenLimit}`,
-      });
-    }
-
     let entraProvider: CfnUserPoolIdentityProvider | undefined;
     if (entraEnabled) {
       const tenantId = contextString(this, "entraTenantId");
@@ -276,7 +302,7 @@ export class WorkmateCostControlStack extends Stack {
     if (allowsCognitoSignIn) supportedIdentityProviders.push(UserPoolClientIdentityProvider.COGNITO);
     if (allowsEntraSignIn) supportedIdentityProviders.push(UserPoolClientIdentityProvider.custom(entraProviderName));
     const userPoolClient = userPool.addClient("WebClient", {
-      userPoolClientName: "workmate-cost-control-web",
+      userPoolClientName: names.userPoolClientName,
       generateSecret: false,
       // userPasswordは総当たりに使いやすいため、Cognitoログインを見せる場合もSRPだけに限定する。
       authFlows: allowsCognitoSignIn ? { userSrp: true } : {},
@@ -314,176 +340,174 @@ export class WorkmateCostControlStack extends Stack {
       sources: [Source.asset(path.join(root, "..", "runtime", "deployment_package.zip"))],
       extract: false,
       prune: true,
+      logRetention,
     });
     const runtimeObjectKey = Fn.join("/", [runtimeKeyPrefix, Fn.select(0, runtimeUpload.objectKeys)]);
     const runtimeRole = new Role(this, "RuntimeRole", { assumedBy: new ServicePrincipal("bedrock-agentcore.amazonaws.com") });
+    const geminiApiKeySecret = geminiEnabled
+      ? Secret.fromSecretNameV2(this, "GeminiApiKeySecret", geminiApiKeySecretName!)
+      : undefined;
+    geminiApiKeySecret?.grantRead(runtimeRole);
     const budgetTable = new Table(this, "BudgetLedger", {
       partitionKey: { name: "PK", type: AttributeType.STRING },
       sortKey: { name: "SK", type: AttributeType.STRING },
       billingMode: BillingMode.PAY_PER_REQUEST,
       pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
-      removalPolicy: RemovalPolicy.DESTROY,
-    });
-    budgetTable.grantReadWriteData(runtimeRole);
-    const pricingTable = new Table(this, "ModelPricingCatalog", {
-      partitionKey: { name: "modelId", type: AttributeType.STRING },
-      billingMode: BillingMode.PAY_PER_REQUEST,
-      pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
-      removalPolicy: RemovalPolicy.DESTROY,
-    });
-    pricingTable.grantReadData(runtimeRole);
-    const pricingHistoryTable = new Table(this, "ModelPricingHistory", {
-      partitionKey: { name: "modelId", type: AttributeType.STRING },
-      sortKey: { name: "verificationId", type: AttributeType.STRING },
-      billingMode: BillingMode.PAY_PER_REQUEST,
-      pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
       timeToLiveAttribute: "expiresAt",
       removalPolicy: RemovalPolicy.DESTROY,
     });
-    const pricingSeeds: AwsCustomResource[] = [];
-    for (const pricing of INITIAL_MODEL_PRICING) {
-      const seed = new AwsCustomResource(this, `SeedPricing${pricing.modelId.replace(/[^A-Za-z0-9]/gu, "")}`, {
-        installLatestAwsSdk: false,
-        onCreate: {
-          service: "DynamoDB",
-          action: "putItem",
-          parameters: {
-            TableName: pricingTable.tableName,
-            Item: {
-              modelId: { S: pricing.modelId },
-              status: { S: pricing.status },
-              currency: { S: pricing.currency },
-              sourceRegion: { S: pricing.sourceRegion },
-              routing: { S: pricing.routing },
-              serviceTier: { S: pricing.serviceTier },
-              inputNanoUsdPerMillionTokens: { N: pricing.inputNanoUsdPerMillionTokens },
-              outputNanoUsdPerMillionTokens: { N: pricing.outputNanoUsdPerMillionTokens },
-              verifiedAt: { S: pricing.verifiedAt },
-              verifiedUntil: { S: pricing.verifiedUntil },
-              version: { S: pricing.version },
-              sources: { L: pricing.sources.map((source) => ({ S: source })) },
-              priceListServiceCode: { S: pricing.priceList.serviceCode },
-              priceListProductAttributeName: { S: pricing.priceList.productAttributeName },
-              priceListProductAttributeValue: { S: pricing.priceList.productAttributeValue },
-              priceListInputUsageType: { S: pricing.priceList.inputUsageType },
-              priceListOutputUsageType: { S: pricing.priceList.outputUsageType },
-              ...(pricing.productId ? { productId: { S: pricing.productId } } : {}),
-            },
-            ConditionExpression: "attribute_not_exists(modelId)",
+    budgetTable.grantReadWriteData(runtimeRole);
+    const budgetConfiguration = new AwsCustomResource(this, "BudgetConfiguration", {
+      installLatestAwsSdk: false,
+      logRetention,
+      onCreate: {
+        service: "DynamoDB",
+        action: "putItem",
+        parameters: {
+          TableName: budgetTable.tableName,
+          Item: {
+            PK: { S: `APP#${budgetScopeId}` },
+            SK: { S: "CONFIG" },
+            limitNanoUsd: { N: monthlyBudgetNanoUsd },
           },
-          physicalResourceId: PhysicalResourceId.of(`pricing-${pricing.modelId}`),
         },
-        policy: AwsCustomResourcePolicy.fromSdkCalls({ resources: [pricingTable.tableArn] }),
-      });
-      seed.node.addDependency(pricingTable);
-      pricingSeeds.push(seed);
-    }
-    const pricingVerifierLogGroup = new LogGroup(this, "PricingVerifierLogs", {
-      retention: logRetention,
-      removalPolicy: RemovalPolicy.DESTROY,
-    });
-    const pricingVerifier = new TriggerFunction(this, "PricingVerifier", {
-      description: "Verifies the model price catalog against the official AWS Price List API",
-      runtime: Runtime.PYTHON_3_13,
-      handler: "index.lambda_handler",
-      code: Code.fromAsset(path.join(root, "..", "pricing-verifier"), { exclude: ["test_*.py", "__pycache__"] }),
-      timeout: Duration.minutes(2),
-      memorySize: 256,
-      logGroup: pricingVerifierLogGroup,
-      environment: {
-        PRICING_TABLE_NAME: pricingTable.tableName,
-        PRICING_HISTORY_TABLE_NAME: pricingHistoryTable.tableName,
-        PRICE_VALIDITY_HOURS: "48",
+        physicalResourceId: PhysicalResourceId.of(`budget-configuration-${budgetScopeId}`),
       },
+      onUpdate: {
+        service: "DynamoDB",
+        action: "putItem",
+        parameters: {
+          TableName: budgetTable.tableName,
+          Item: {
+            PK: { S: `APP#${budgetScopeId}` },
+            SK: { S: "CONFIG" },
+            limitNanoUsd: { N: monthlyBudgetNanoUsd },
+          },
+        },
+        physicalResourceId: PhysicalResourceId.of(`budget-configuration-${budgetScopeId}`),
+      },
+      policy: AwsCustomResourcePolicy.fromSdkCalls({ resources: [budgetTable.tableArn] }),
     });
-    pricingVerifier.executeAfter(...pricingSeeds);
-    pricingTable.grantReadWriteData(pricingVerifier);
-    pricingHistoryTable.grantWriteData(pricingVerifier);
-    pricingVerifier.addToRolePolicy(new PolicyStatement({
-      effect: Effect.ALLOW,
-      actions: ["dynamodb:TransactWriteItems"],
-      resources: [pricingTable.tableArn, pricingHistoryTable.tableArn],
-    }));
-    pricingVerifier.addToRolePolicy(new PolicyStatement({
-      effect: Effect.ALLOW,
-      actions: ["pricing:GetProducts"],
-      resources: ["*"],
-    }));
-    const pricingVerificationSchedule = new Rule(this, "PricingVerificationSchedule", {
-      description: "Verifies all active model prices daily at 00:00 JST (15:00 UTC)",
-      schedule: Schedule.cron({ minute: "0", hour: "15" }),
-    });
-    pricingVerificationSchedule.addTarget(new LambdaTarget(pricingVerifier, { retryAttempts: 2 }));
-    const gatewayToolLogGroup = new LogGroup(this, "GatewayToolLogs", {
-      retention: logRetention,
+    budgetConfiguration.node.addDependency(budgetTable);
+
+    const pricingCatalogBucket = new Bucket(this, "PricingCatalogBucket", {
+      encryption: BucketEncryption.S3_MANAGED,
+      blockPublicAccess: BlockPublicAccess.BLOCK_ALL,
+      enforceSSL: true,
+      versioned: true,
+      autoDeleteObjects: true,
       removalPolicy: RemovalPolicy.DESTROY,
     });
-    const gatewayTool = new LambdaFunction(this, "GatewayTool", {
-      functionName: `${resourceNamePrefix}-support-directory-tool`,
-      description: `Read-only support contact lookup for the ${uiName} AgentCore Gateway`,
-      runtime: Runtime.NODEJS_22_X,
-      handler: "index.handler",
-      code: Code.fromAsset(path.join(root, "..", "gateway-tool"), { exclude: ["*.node-test.mjs"] }),
-      timeout: Duration.seconds(5),
-      memorySize: 128,
-      logGroup: gatewayToolLogGroup,
+    const pricingCatalogObjectKey = "catalog/model-pricing.json";
+    const pricingCatalogDeployment = new BucketDeployment(this, "PricingCatalogDeployment", {
+      destinationBucket: pricingCatalogBucket,
+      destinationKeyPrefix: "catalog",
+      sources: [Source.jsonData("model-pricing.json", MODEL_PRICING_CATALOG)],
+      prune: true,
+      logRetention,
     });
+    pricingCatalogBucket.grantRead(runtimeRole);
+    let pricingVerifier: LambdaFunction | undefined;
+    if (priceVerificationEnabled) {
+      const pricingVerifierLogGroup = new LogGroup(this, "PricingVerifierLogs", {
+        logGroupName: names.pricingVerifierLogGroupName,
+        retention: logRetention,
+        removalPolicy: RemovalPolicy.DESTROY,
+      });
+      const pricingWarningMetric = new MetricFilter(this, "PricingVerificationWarningMetric", {
+        logGroup: pricingVerifierLogGroup,
+        filterPattern: FilterPattern.stringValue("$.event", "=", "pricing.verification.warning"),
+        metricNamespace: names.metricNamespace,
+        metricName: "PricingVerificationWarnings",
+        metricValue: "1",
+        defaultValue: 0,
+      });
+      new Alarm(this, "PricingVerificationWarningAlarm", {
+        alarmDescription: "Model pricing verification reported a mismatch or unavailable source; inference continues with configured prices",
+        metric: pricingWarningMetric.metric({ period: Duration.minutes(5), statistic: "Sum" }),
+        threshold: 1,
+        evaluationPeriods: 1,
+        comparisonOperator: ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+        treatMissingData: TreatMissingData.NOT_BREACHING,
+      });
+      pricingVerifier = new LambdaFunction(this, "PricingVerifier", {
+        description: "Compares the approved model price catalog with the official AWS Price List API",
+        runtime: Runtime.PYTHON_3_13,
+        handler: "index.lambda_handler",
+        code: Code.fromAsset(path.join(root, "..", "pricing-verifier"), { exclude: ["test_*.py", "__pycache__"] }),
+        timeout: Duration.minutes(2),
+        memorySize: 256,
+        logGroup: pricingVerifierLogGroup,
+        environment: {
+          PRICING_CATALOG_BUCKET_NAME: pricingCatalogBucket.bucketName,
+          PRICING_CATALOG_OBJECT_KEY: pricingCatalogObjectKey,
+        },
+      });
+      pricingCatalogBucket.grantRead(pricingVerifier);
+      pricingVerifier.addToRolePolicy(new PolicyStatement({ effect: Effect.ALLOW, actions: ["pricing:GetProducts"], resources: ["*"] }));
+      const pricingVerificationSchedule = new Rule(this, "PricingVerificationSchedule", {
+        description: "Checks approved model prices daily at 00:00 JST (15:00 UTC)",
+        schedule: Schedule.cron({ minute: "0", hour: "15" }),
+      });
+      pricingVerificationSchedule.addTarget(new LambdaTarget(pricingVerifier, { retryAttempts: 2 }));
+      pricingVerifier.node.addDependency(pricingCatalogDeployment);
+    }
     const gatewayRole = new Role(this, "ToolGatewayRole", {
-      description: "Least-privilege execution role for the Workmate AgentCore Gateway",
+      description: `Least-privilege execution role for the ${names.base} AgentCore Gateway`,
       assumedBy: new ServicePrincipal("bedrock-agentcore.amazonaws.com").withConditions({
         StringEquals: { "aws:SourceAccount": this.account },
-        ArnLike: { "aws:SourceArn": `arn:${this.partition}:bedrock-agentcore:${this.region}:${this.account}:gateway/${resourceNamePrefix}-tools*` },
+        ArnLike: { "aws:SourceArn": `arn:${this.partition}:bedrock-agentcore:${this.region}:${this.account}:gateway/${names.gatewayName}*` },
       }),
     });
     const toolGateway = new Gateway(this, "ToolGateway", {
-      gatewayName: `${resourceNamePrefix}-tools`,
-      description: `${uiName} MCP gateway for authenticated Lambda tools`,
+      gatewayName: names.gatewayName,
+      description: `${runtimeDisplayName} MCP gateway for authenticated Lambda tools`,
       authorizerConfiguration: GatewayAuthorizer.usingCognito({
         userPool,
         allowedClients: [userPoolClient],
       }),
       protocolConfiguration: GatewayProtocol.mcp({
         supportedVersions: [MCPProtocolVersion.of("2025-11-25")],
-        instructions: `Use the available read-only ${uiName} business tools when their descriptions match the user request.`,
+        instructions: `Use the available read-only ${runtimeDisplayName} business tools when their descriptions match the user request.`,
       }),
       role: gatewayRole,
     });
-    const supportDirectoryTarget = toolGateway.addLambdaTarget("SupportDirectoryTarget", {
-      gatewayTargetName: "SupportDirectory",
-      description: "Looks up the contact address and business hours for a support department",
-      lambdaFunction: gatewayTool,
-      toolSchema: ToolSchema.fromInline([{
-        name: "lookup_support_contact",
-        description: "Look up the email address and business hours for sales, support, or billing.",
-        inputSchema: {
-          type: SchemaDefinitionType.OBJECT,
-          properties: {
-            department: {
-              type: SchemaDefinitionType.STRING,
-              description: "Department name: sales, support, or billing.",
-            },
-          },
-          required: ["department"],
-        },
-        outputSchema: {
-          type: SchemaDefinitionType.OBJECT,
-          properties: {
-            department: { type: SchemaDefinitionType.STRING },
-            email: { type: SchemaDefinitionType.STRING },
-            hours: { type: SchemaDefinitionType.STRING },
-          },
-          required: ["department", "email", "hours"],
-        },
-      }]),
+    const configuredGatewayTargets = gatewayTargets.filter((target) => target.enabled).map((target) => {
+      if (!(target.key in gatewayToolCatalog)) throw new Error(`gatewayTargets references unknown catalog key '${target.key}'`);
+      const catalog = gatewayToolCatalog[target.key as keyof typeof gatewayToolCatalog];
+      const isLegacySupportDirectory = target.key === "support-directory";
+      const gatewayToolLogGroup = new LogGroup(this, isLegacySupportDirectory ? "GatewayToolLogs" : `${catalog.constructId}Logs`, {
+        logGroupName: names.gatewayToolLogGroupName(target.key),
+        retention: logRetention,
+        removalPolicy: RemovalPolicy.DESTROY,
+      });
+      const gatewayTool = new LambdaFunction(this, isLegacySupportDirectory ? "GatewayTool" : `${catalog.constructId}Function`, {
+        functionName: names.gatewayToolFunctionName(catalog.functionNameSuffix),
+        description: `${catalog.description} for the ${runtimeDisplayName} AgentCore Gateway`,
+        runtime: Runtime.NODEJS_22_X,
+        handler: "index.handler",
+        code: Code.fromAsset(path.join(root, "..", catalog.assetDirectory), { exclude: ["*.node-test.mjs"] }),
+        timeout: Duration.seconds(target.timeoutSeconds),
+        memorySize: target.memorySizeMb,
+        environment: target.environmentVariables,
+        logGroup: gatewayToolLogGroup,
+      });
+      const gatewayTarget = toolGateway.addLambdaTarget(`${catalog.constructId}Target`, {
+        gatewayTargetName: catalog.targetName,
+        description: catalog.targetDescription,
+        lambdaFunction: gatewayTool,
+        toolSchema: catalog.toolSchema(),
+      });
+      return { key: target.key, target: gatewayTarget };
     });
     const memoryKey = new Key(this, "MemoryKey", {
-      alias: `alias/${resourceNamePrefix}-cost-control-memory`,
-      description: `Encrypts ${uiName} AgentCore Memory`,
+      alias: names.kmsMemoryAlias,
+      description: `Encrypts ${runtimeDisplayName} AgentCore Memory`,
       enableKeyRotation: true,
       removalPolicy: RemovalPolicy.DESTROY,
     });
     const memory = new Memory(this, "ChatMemory", {
-      memoryName: "workmate_cost_control_memory",
+      memoryName: names.memoryName,
       description: "User-scoped chat history and personal long-term memory",
       expirationDuration: Duration.days(30),
       kmsKey: memoryKey,
@@ -491,12 +515,12 @@ export class WorkmateCostControlStack extends Stack {
         new ManagedMemoryStrategy(MemoryStrategyType.SEMANTIC, {
           strategyName: "PersonalFacts",
           description: "Extract durable user facts across chat sessions",
-          namespaces: ["/workmate/{actorId}/facts"],
+          namespaces: [`${names.memoryNamespacePrefix}/{actorId}/facts`],
         }),
         new ManagedMemoryStrategy(MemoryStrategyType.USER_PREFERENCE, {
           strategyName: "UserPreferences",
           description: "Extract durable user preferences across chat sessions",
-          namespaces: ["/workmate/{actorId}/preferences"],
+          namespaces: [`${names.memoryNamespacePrefix}/{actorId}/preferences`],
         }),
       ],
     });
@@ -510,22 +534,31 @@ export class WorkmateCostControlStack extends Stack {
       actions: ["kms:DescribeKey"],
       resources: [memoryKey.keyArn],
     }));
-    const bedrockResources = (models: readonly (typeof COST_CONTROLLED_MODEL_CATALOG)[number][]) => models.flatMap((model) => model.modelId.startsWith("us.")
-      ? [
+    const bedrockModels = COST_CONTROLLED_MODEL_CATALOG.filter((model) => model.provider !== "google" && enabledModelKeys.includes(model.key));
+    const bedrockResources = (models: readonly (typeof bedrockModels)[number][]) => models.flatMap((model) => [
+      ...(model.modelId.startsWith("us.") ? [
         `arn:${this.partition}:bedrock:${this.region}:${this.account}:inference-profile/${model.modelId}`,
         ...["us-east-1", "us-east-2", "us-west-2"].flatMap((region) => model.foundationModelIds.map((foundationModelId) => `arn:${this.partition}:bedrock:${region}::foundation-model/${foundationModelId}`)),
-      ]
-      : model.foundationModelIds.map((foundationModelId) => `arn:${this.partition}:bedrock:${this.region}::foundation-model/${foundationModelId}`));
-    runtimeRole.addToPolicy(new PolicyStatement({
-      effect: Effect.ALLOW,
-      actions: ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
-      resources: bedrockResources(COST_CONTROLLED_MODEL_CATALOG),
-    }));
-    runtimeRole.addToPolicy(new PolicyStatement({
-      effect: Effect.ALLOW,
-      actions: ["bedrock:Retrieve"],
-      resources: [`arn:${this.partition}:bedrock:${this.region}:${this.account}:knowledge-base/${knowledgeBaseId.valueAsString}`],
-    }));
+      ] : model.foundationModelIds.map((foundationModelId) => `arn:${this.partition}:bedrock:${this.region}::foundation-model/${foundationModelId}`)),
+      ...("requiresDefaultProject" in model && model.requiresDefaultProject ? [`arn:${this.partition}:bedrock:${this.region}:${this.account}:project/default`] : []),
+    ]);
+    if (bedrockModels.length > 0) {
+      runtimeRole.addToPolicy(new PolicyStatement({
+        effect: Effect.ALLOW,
+        actions: ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream", "bedrock:CountTokens"],
+        resources: bedrockResources(bedrockModels),
+      }));
+    }
+    const knowledgeBaseResources = knowledgeBases
+      .filter((knowledgeBase) => knowledgeBase.enabled)
+      .map((knowledgeBase) => `arn:${this.partition}:bedrock:${knowledgeBase.region}:${this.account}:knowledge-base/${knowledgeBase.knowledgeBaseId}`);
+    if (knowledgeBaseResources.length > 0) {
+      runtimeRole.addToPolicy(new PolicyStatement({
+        effect: Effect.ALLOW,
+        actions: ["bedrock:Retrieve"],
+        resources: knowledgeBaseResources,
+      }));
+    }
     // AgentCore Runtimeが自身のロググループへ書けるようにする。これがないとログが1行も残らない。
     runtimeRole.addToPolicy(new PolicyStatement({
       effect: Effect.ALLOW,
@@ -539,8 +572,8 @@ export class WorkmateCostControlStack extends Stack {
     }));
     artifactBucket.grantRead(runtimeRole);
     const agentRuntime = new CfnRuntime(this, "AgentRuntime", {
-      agentRuntimeName: `${runtimeNamePrefix}_cost_control`,
-      description: `${uiName} browser-direct AG-UI CodeZip runtime with LLM budget control`,
+      agentRuntimeName: names.runtimeName,
+      description: `${runtimeDisplayName} browser-direct AG-UI CodeZip runtime with LLM budget control`,
       agentRuntimeArtifact: { codeConfiguration: { code: { s3: { bucket: artifactBucket.bucketName, prefix: runtimeObjectKey } }, runtime: "NODE_22", entryPoint: ["dist/app.js"] } },
       authorizerConfiguration: {
         customJwtAuthorizer: {
@@ -556,26 +589,63 @@ export class WorkmateCostControlStack extends Stack {
       environmentVariables: {
         AWS_REGION: this.region,
         GATEWAY_URL: toolGateway.gatewayUrl!,
-        KNOWLEDGE_BASE_ID: knowledgeBaseId.valueAsString,
+        KNOWLEDGE_BASES_JSON: knowledgeBasesJson,
         MEMORY_ID: memory.memoryId,
         BUDGET_TABLE_NAME: budgetTable.tableName,
-        PRICING_TABLE_NAME: pricingTable.tableName,
-        AWS_ACCOUNT_ID: this.account,
-        BUDGET_PROJECT_ID: resourceNamePrefix,
-        ACCOUNT_MONTHLY_BUDGET_NANO_USD: accountBudgetNanoUsd,
-        PROJECT_MONTHLY_BUDGET_NANO_USD: projectBudgetNanoUsd,
-        USER_LIMIT_PROFILES_JSON: userLimitProfilesJson,
+        BUDGET_SCOPE_ID: budgetScopeId,
+        APPLICATION_NAME: names.applicationName,
+        MEMORY_NAMESPACE_PREFIX: names.memoryNamespacePrefix,
+        PRICING_CATALOG_BUCKET_NAME: pricingCatalogBucket.bucketName,
+        PRICING_CATALOG_OBJECT_KEY: pricingCatalogObjectKey,
+        ENABLED_MODEL_KEYS_JSON: JSON.stringify(enabledModelKeys),
+        ...(geminiApiKeySecretName ? { GEMINI_API_KEY_SECRET_NAME: geminiApiKeySecretName } : {}),
         ...runtimeLogEnvironment,
       },
     });
-    pricingVerifier.executeBefore(agentRuntime);
     agentRuntime.node.addDependency(runtimeUpload);
+    agentRuntime.node.addDependency(budgetConfiguration, pricingCatalogDeployment);
 
-    // 保持期間を制御するため、サービス任せにせずこちらでロググループを持つ。
-    const runtimeLogGroup = new LogGroup(this, "RuntimeLogs", {
+    // AgentCoreが初回起動時に利用する既定ロググループもCDK管理下に置き、保持期間なしの残存を防ぐ。
+    const agentCoreRuntimeServiceLogGroup = new LogGroup(this, "AgentCoreRuntimeServiceLogs", {
+      logGroupName: Fn.join("", ["/aws/bedrock-agentcore/runtimes/", agentRuntime.attrAgentRuntimeId, "-DEFAULT"]),
       retention: logRetention,
       removalPolicy: RemovalPolicy.DESTROY,
     });
+    agentCoreRuntimeServiceLogGroup.node.addDependency(agentRuntime);
+
+    // 保持期間を制御するため、サービス任せにせずこちらでロググループを持つ。
+    const runtimeLogGroup = new LogGroup(this, "RuntimeLogs", {
+      logGroupName: names.runtimeLogGroupName,
+      retention: logRetention,
+      removalPolicy: RemovalPolicy.DESTROY,
+    });
+    const settledCostFilter = new MetricFilter(this, "RecordedModelCostMetric", {
+      logGroup: runtimeLogGroup,
+      filterPattern: FilterPattern.literal('{ $.event = "model.cost.recorded" && $.actualUsd = * }'),
+      metricNamespace: names.metricNamespace,
+      metricName: "SettledModelCostUsd",
+      metricValue: "$.actualUsd",
+      defaultValue: 0,
+    });
+    const settledTokensFilter = new MetricFilter(this, "RecordedModelTokensMetric", {
+      logGroup: runtimeLogGroup,
+      filterPattern: FilterPattern.literal('{ $.event = "model.cost.recorded" && $.actualTokens = * }'),
+      metricNamespace: names.metricNamespace,
+      metricName: "SettledModelTokens",
+      metricValue: "$.actualTokens",
+      defaultValue: 0,
+    });
+    const costDashboard = new Dashboard(this, "CostDashboard", {
+      dashboardName: names.dashboardName,
+    });
+    const costMetric = settledCostFilter.metric({ statistic: "Sum", period: Duration.hours(1) });
+    const tokenMetric = settledTokensFilter.metric({ statistic: "Sum", period: Duration.hours(1) });
+    costDashboard.addWidgets(
+      new SingleValueWidget({ title: "Model cost (selected period, USD)", metrics: [costMetric], setPeriodToTimeRange: true }),
+      new SingleValueWidget({ title: "Model tokens (selected period)", metrics: [tokenMetric], setPeriodToTimeRange: true }),
+      new GraphWidget({ title: "Hourly model cost (USD)", left: [costMetric] }),
+      new GraphWidget({ title: "Hourly model tokens", left: [tokenMetric] }),
+    );
     configureLoggingDelivery(this, agentRuntime.attrAgentRuntimeArn, [
       { logType: LogType.APPLICATION_LOGS, destination: LoggingDestination.cloudWatchLogs(runtimeLogGroup) },
       { logType: LogType.USAGE_LOGS, destination: LoggingDestination.cloudWatchLogs(runtimeLogGroup) },
@@ -597,10 +667,12 @@ export class WorkmateCostControlStack extends Stack {
             entraProviderName: entraEnabled ? entraProviderName : null,
             loginMethods,
           },
-          ui: { name: uiName },
+          ui: { name: runtimeDisplayName },
           agent: { runtimeArn: agentRuntime.attrAgentRuntimeArn, qualifier: "DEFAULT" },
+          features: { enabledModelKeys },
         }),
       ],
+      logRetention,
       distribution,
       distributionPaths: ["/*"],
       prune: true,
@@ -608,26 +680,30 @@ export class WorkmateCostControlStack extends Stack {
     webDeployment.node.addDependency(agentRuntime);
 
     new CfnOutput(this, "ApplicationUrl", { value: applicationUrl });
-    new CfnOutput(this, "ResourceNamePrefix", { value: resourceNamePrefix });
-    new CfnOutput(this, "UiName", { value: uiName });
+    new CfnOutput(this, "DefaultCdkPrefix", { value: names.base });
+    new CfnOutput(this, "RuntimeDisplayName", { value: runtimeDisplayName });
     new CfnOutput(this, "CloudFrontDomainName", { value: distribution.distributionDomainName });
     new CfnOutput(this, "UserPoolId", { value: userPool.userPoolId });
     new CfnOutput(this, "UserPoolClientId", { value: userPoolClient.userPoolClientId });
     new CfnOutput(this, "CognitoDomain", { value: `${userPoolDomain.domainName}.auth.${this.region}.amazoncognito.com` });
-    new CfnOutput(this, "EntraRedirectUri", { value: `https://${userPoolDomain.domainName}.auth.${this.region}.amazoncognito.com/oauth2/idpresponse` });
+    if (entraEnabled) {
+      new CfnOutput(this, "EntraRedirectUri", { value: `https://${userPoolDomain.domainName}.auth.${this.region}.amazoncognito.com/oauth2/idpresponse` });
+    }
     new CfnOutput(this, "AgentRuntimeArn", { value: agentRuntime.attrAgentRuntimeArn });
     new CfnOutput(this, "MemoryId", { value: memory.memoryId });
     new CfnOutput(this, "ToolGatewayUrl", { value: toolGateway.gatewayUrl! });
-    new CfnOutput(this, "SupportDirectoryTargetId", { value: supportDirectoryTarget.targetId });
+    for (const configuredTarget of configuredGatewayTargets) {
+      new CfnOutput(this, `${gatewayToolCatalog[configuredTarget.key as keyof typeof gatewayToolCatalog].constructId}TargetId`, {
+        value: configuredTarget.target.targetId,
+      });
+    }
     new CfnOutput(this, "RuntimeArtifactsBucketName", { value: artifactBucket.bucketName });
     new CfnOutput(this, "RuntimeLogGroupName", { value: runtimeLogGroup.logGroupName });
     new CfnOutput(this, "BudgetLedgerTableName", { value: budgetTable.tableName });
-    new CfnOutput(this, "ModelPricingCatalogTableName", { value: pricingTable.tableName });
-    new CfnOutput(this, "ModelPricingHistoryTableName", { value: pricingHistoryTable.tableName });
-    new CfnOutput(this, "PricingVerifierFunctionName", { value: pricingVerifier.functionName });
-    new CfnOutput(this, "AccountMonthlyBudgetUsd", { value: this.node.tryGetContext("accountMonthlyBudgetUsd")?.toString() ?? "100" });
-    new CfnOutput(this, "ProjectMonthlyBudgetUsd", { value: this.node.tryGetContext("projectMonthlyBudgetUsd")?.toString() ?? "60" });
-    new CfnOutput(this, "UserLimitProfileIds", { value: userLimitProfiles.map((profile) => profile.id).join(",") });
-    new CfnOutput(this, "DefaultUserLimitProfileId", { value: defaultUserLimitProfile(userLimitProfiles).id });
+    new CfnOutput(this, "BudgetScopeId", { value: budgetScopeId });
+    new CfnOutput(this, "ModelPricingCatalogBucketName", { value: pricingCatalogBucket.bucketName });
+    if (pricingVerifier) new CfnOutput(this, "PricingVerifierFunctionName", { value: pricingVerifier.functionName });
+    new CfnOutput(this, "CostDashboardName", { value: costDashboard.dashboardName });
+    new CfnOutput(this, "MonthlyBudgetUsd", { value: this.node.tryGetContext("monthlyBudgetUsd")?.toString() ?? "60" });
   }
 }

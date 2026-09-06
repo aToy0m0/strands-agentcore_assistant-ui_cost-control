@@ -25,8 +25,8 @@ function roleUrl(role, passwordName) {
 
 const environment = {
   ...process.env,
-  DATABASE_URL: roleUrl("workmate_app", "APP_DB_PASSWORD"),
-  AUTH_DATABASE_URL: roleUrl("workmate_auth", "AUTH_DB_PASSWORD"),
+  DATABASE_URL: roleUrl("agentcore_cost_control_app", "APP_DB_PASSWORD"),
+  AUTH_DATABASE_URL: roleUrl("agentcore_cost_control_auth", "AUTH_DB_PASSWORD"),
   DATABASE_POOL_MAX: "2",
 };
 const npmExecPath = process.env.npm_execpath;

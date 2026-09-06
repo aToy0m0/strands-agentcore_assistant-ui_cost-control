@@ -2,7 +2,7 @@
   "environment": "local",
   "debug": false,
   "ui": {
-    "name": "Workmate"
+    "name": "AIエージェント"
   },
   "auth": {
     "region": "",
@@ -16,5 +16,8 @@
   "agent": {
     "runtimeArn": "",
     "qualifier": "DEFAULT"
+  },
+  "features": {
+    "enabledModelKeys": ["nova-2-lite", "claude-haiku-4-5"]
   }
 }

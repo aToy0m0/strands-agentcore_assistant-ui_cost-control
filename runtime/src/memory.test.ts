@@ -11,7 +11,7 @@ import { describe, expect, it, vi } from "vitest";
 import { AgentCoreMemory } from "./memory.js";
 
 function memoryWith(send: ReturnType<typeof vi.fn>): AgentCoreMemory {
-  return new AgentCoreMemory("memory-123", { send } as unknown as BedrockAgentCoreClient);
+  return new AgentCoreMemory("memory-123", { send } as unknown as BedrockAgentCoreClient, "/agent-core-runtime-cost-control");
 }
 
 describe("AgentCoreMemory", () => {
@@ -109,8 +109,8 @@ describe("AgentCoreMemory", () => {
     expect(commands).toHaveLength(2);
     expect(commands.every((command) => command instanceof RetrieveMemoryRecordsCommand)).toBe(true);
     expect(commands.map((command) => command.input.namespace)).toEqual([
-      "/workmate/actor-1/facts",
-      "/workmate/actor-1/preferences",
+      "/agent-core-runtime-cost-control/actor-1/facts",
+      "/agent-core-runtime-cost-control/actor-1/preferences",
     ]);
   });
 });

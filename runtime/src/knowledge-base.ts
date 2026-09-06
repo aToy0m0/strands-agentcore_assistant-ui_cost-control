@@ -5,6 +5,7 @@ import {
 } from "@aws-sdk/client-bedrock-agent-runtime";
 import { tool } from "@strands-agents/sdk";
 import { z } from "zod";
+import { parseKnowledgeBases, type KnowledgeBaseConfig } from "../../shared/deployment-resources.js";
 
 const knowledgeBaseIdSchema = z.string().regex(/^[0-9A-Z]{10}$/u, "Knowledge Base ID must be 10 uppercase alphanumeric characters");
 const querySchema = z.string().trim().min(1).max(1_000);
@@ -67,16 +68,25 @@ export async function searchKnowledgeBase(
   };
 }
 
-export function createKnowledgeBaseSearchTool(knowledgeBaseId: string, region: string) {
-  const validatedKnowledgeBaseId = knowledgeBaseIdSchema.parse(knowledgeBaseId);
-  const client = new BedrockAgentRuntimeClient({ region });
+export function createKnowledgeBaseSearchTool(config: KnowledgeBaseConfig) {
+  const validatedKnowledgeBaseId = knowledgeBaseIdSchema.parse(config.knowledgeBaseId);
+  const client = new BedrockAgentRuntimeClient({ region: config.region });
   return tool({
-    name: "search_knowledge_base",
-    description: "Search the connected company knowledge base for facts needed to answer the user's question. Preserve and cite source locations from the returned results.",
+    name: config.toolName,
+    description: config.description,
     inputSchema: z.object({
       query: querySchema.describe("A concise semantic search query."),
-      numberOfResults: numberOfResultsSchema.optional().describe("Number of chunks to return. Defaults to 5."),
+      numberOfResults: numberOfResultsSchema.optional().describe(`Number of chunks to return. Defaults to ${config.numberOfResults}.`),
     }),
-    callback: (input) => searchKnowledgeBase(client, validatedKnowledgeBaseId, input),
+    callback: (input) => searchKnowledgeBase(client, validatedKnowledgeBaseId, {
+      ...input,
+      numberOfResults: input.numberOfResults ?? config.numberOfResults,
+    }),
   });
+}
+
+export function createKnowledgeBaseSearchTools(configured: string) {
+  return parseKnowledgeBases(configured)
+    .filter((config) => config.enabled)
+    .map(createKnowledgeBaseSearchTool);
 }

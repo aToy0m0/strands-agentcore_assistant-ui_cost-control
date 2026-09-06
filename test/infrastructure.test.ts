@@ -1,45 +1,65 @@
 import { App } from "aws-cdk-lib";
 import { Match, Template } from "aws-cdk-lib/assertions";
 import { describe, expect, it } from "vitest";
-import { decodeBase64UrlContext, WorkmateCostControlStack, resolveLogRetention, resolveMonthlyBudgetNanoUsd, resolveResourceNamePrefix, resolveUiName, resolveWebDebugMode } from "../infrastructure/stack.js";
+import { decodeBase64UrlContext, AgentCoreCostControlStack, resolveLogRetention, resolveMonthlyBudgetNanoUsd, resolveWebDebugMode } from "../infrastructure/stack.js";
+import { resolveResourceNames, resolveRuntimeDisplayName } from "../infrastructure/naming.js";
 import { RetentionDays } from "aws-cdk-lib/aws-logs";
 
 function template(context: Record<string, unknown> = {}) {
   const app = new App({ context: {
-    resourceNamePrefix: "workmate-14",
-    uiName: "Workmate",
+    defaultCdkPrefix: "Agent-Core-Runtime_Cost-control",
+    runtimeDisplayName: "AIエージェント",
     customDomainEnabled: true,
-    customDomainName: "workmate14.example.com",
+    customDomainName: "agent.example.com",
     hostedZoneId: "Z1234567890ABC",
     hostedZoneName: "example.com",
     certificateArn: "arn:aws:acm:us-east-1:123456789012:certificate/00000000-0000-0000-0000-000000000003",
+    knowledgeBases: JSON.stringify([{
+      key: "internal-documents",
+      enabled: true,
+      region: "us-east-1",
+      knowledgeBaseId: "ABCDEFGHIJ",
+      toolName: "search_internal_documents",
+      description: "Search internal documents",
+      numberOfResults: 5,
+    }]),
+    gatewayTargets: JSON.stringify([{
+      key: "support-directory",
+      enabled: true,
+      timeoutSeconds: 5,
+      memorySizeMb: 128,
+      environmentVariables: {},
+    }]),
+    enabledModelKeys: JSON.stringify([
+      "nova-2-lite", "claude-haiku-4-5", "claude-sonnet-4-6", "claude-sonnet-5",
+      "gpt-oss-20b", "gpt-oss-120b", "gpt-5-6-luna", "glm-4-7-flash", "glm-4-7",
+    ]),
     ...context,
   } });
-  return Template.fromStack(new WorkmateCostControlStack(app, "TestStack", {
+  return Template.fromStack(new AgentCoreCostControlStack(app, "TestStack", {
     env: { account: "123456789012", region: "us-east-1" },
   }));
 }
 
 function entraContext() {
   return {
-    cognitoDomainPrefix: "workmate12-entra-test",
     entraEnabled: true,
     entraTenantId: "00000000-0000-0000-0000-000000000001",
     entraClientId: "00000000-0000-0000-0000-000000000002",
-    entraClientSecretName: "workmate12/entra/client-secret",
+    entraClientSecretName: "sample/entra/client-secret",
   };
 }
 
-describe("WorkmateCostControlStack", () => {
+describe("AgentCoreCostControlStack", () => {
   it("Cognito認証・静的Web・CodeZip Runtimeだけを構築する", () => {
-    const value = template({ cognitoDomainPrefix: "workmate12-test" });
+    const value = template();
     value.resourceCountIs("AWS::Cognito::UserPool", 1);
     value.resourceCountIs("AWS::Cognito::UserPoolClient", 1);
     value.resourceCountIs("AWS::Cognito::UserPoolDomain", 1);
     value.resourceCountIs("AWS::Cognito::UserPoolIdentityProvider", 0);
     value.resourceCountIs("AWS::BedrockAgentCore::Runtime", 1);
     value.resourceCountIs("AWS::CloudFront::Distribution", 1);
-    value.resourceCountIs("AWS::DynamoDB::Table", 3);
+    value.resourceCountIs("AWS::DynamoDB::Table", 1);
     value.resourceCountIs("AWS::Route53::RecordSet", 1);
     value.resourceCountIs("AWS::RDS::DBInstance", 0);
     value.resourceCountIs("AWS::Lambda::Url", 0);
@@ -49,22 +69,22 @@ describe("WorkmateCostControlStack", () => {
       AuthorizerConfiguration: { CustomJWTAuthorizer: Match.objectLike({ AllowedClients: Match.anyValue() }) },
     }));
     value.hasResourceProperties("AWS::BedrockAgentCore::Memory", {
-      Name: "workmate_cost_control_memory",
+      Name: "agent_core_runtime_cost_control_memory",
     });
   });
 
-  it("リソース接頭辞を明示名と費用台帳のプロジェクトIDへ統一して使う", () => {
-    const value = template({ resourceNamePrefix: "sample-21", cognitoDomainPrefix: "sample21-test" });
+  it("リソース接頭辞と安定した費用集計IDを使う", () => {
+    const value = template({ defaultCdkPrefix: "Sample_21" });
     value.hasResourceProperties("AWS::Lambda::Function", Match.objectLike({ FunctionName: "sample-21-support-directory-tool" }));
     value.hasResourceProperties("AWS::BedrockAgentCore::Gateway", Match.objectLike({ Name: "sample-21-tools" }));
     value.hasResourceProperties("AWS::BedrockAgentCore::Runtime", Match.objectLike({
-      AgentRuntimeName: "sample_21_cost_control",
-      EnvironmentVariables: Match.objectLike({ BUDGET_PROJECT_ID: "sample-21" }),
+      AgentRuntimeName: "sample_21_runtime",
+      EnvironmentVariables: Match.objectLike({ BUDGET_SCOPE_ID: "sample-21" }),
     }));
   });
 
   it("タグ対応リソースへCostGroupタグを設定する", () => {
-    const value = template({ resourceNamePrefix: "sample-21", cognitoDomainPrefix: "sample21-cost-tag-test" });
+    const value = template({ defaultCdkPrefix: "Sample_21" });
     const costGroupTag = { Key: "CostGroup", Value: "sample-21" };
     value.hasResourceProperties("AWS::S3::Bucket", Match.objectLike({ Tags: Match.arrayWith([costGroupTag]) }));
     value.hasResourceProperties("AWS::DynamoDB::Table", Match.objectLike({ Tags: Match.arrayWith([costGroupTag]) }));
@@ -72,17 +92,20 @@ describe("WorkmateCostControlStack", () => {
   });
 
   it("リソース接頭辞とUI名の不正値を拒否する", () => {
-    expect(resolveResourceNamePrefix("sample-21")).toBe("sample-21");
-    expect(() => resolveResourceNamePrefix("Sample_21")).toThrow("resourceNamePrefix");
-    expect(resolveUiName("  社内アシスタント  ")).toBe("社内アシスタント");
-    expect(() => resolveUiName(" ")).toThrow("uiName");
+    expect(resolveResourceNames("Sample_21").base).toBe("sample-21");
+    expect(resolveResourceNames("123 Sample").base).toBe("app-123-sample");
+    expect(resolveResourceNames("This_is_a_very_long_resource_name_that_needs_shortening").base)
+      .toMatch(/^this-is-a-very-long-res-[a-f0-9]{8}$/u);
+    expect(() => resolveResourceNames("Sample@21")).toThrow("defaultCdkPrefix");
+    expect(resolveRuntimeDisplayName("  社内アシスタント  ")).toBe("社内アシスタント");
+    expect(() => resolveRuntimeDisplayName(" ")).toThrow("runtimeDisplayName");
   });
 
   it("既存証明書をCloudFrontへ設定し、既存Hosted ZoneへAlias Aレコードだけを追加する", () => {
     const value = template();
     value.hasResourceProperties("AWS::CloudFront::Distribution", Match.objectLike({
       DistributionConfig: Match.objectLike({
-        Aliases: ["workmate14.example.com"],
+        Aliases: ["agent.example.com"],
         ViewerCertificate: Match.objectLike({
           AcmCertificateArn: "arn:aws:acm:us-east-1:123456789012:certificate/00000000-0000-0000-0000-000000000003",
           MinimumProtocolVersion: "TLSv1.2_2021",
@@ -91,7 +114,7 @@ describe("WorkmateCostControlStack", () => {
     }));
     value.hasResourceProperties("AWS::Route53::RecordSet", Match.objectLike({
       HostedZoneId: "Z1234567890ABC",
-      Name: "workmate14.example.com.",
+      Name: "agent.example.com.",
       Type: "A",
       AliasTarget: Match.objectLike({ DNSName: Match.anyValue() }),
     }));
@@ -100,7 +123,7 @@ describe("WorkmateCostControlStack", () => {
   });
 
   it("カスタムドメインがHosted Zone配下でなければ拒否する", () => {
-    expect(() => template({ customDomainName: "workmate14.other.example" })).toThrow("must be a subdomain");
+    expect(() => template({ customDomainName: "agent.other.example" })).toThrow("must be a subdomain");
   });
 
   it("カスタムドメイン無効時は証明書設定なしでCloudFront標準ドメインを使う", () => {
@@ -121,78 +144,98 @@ describe("WorkmateCostControlStack", () => {
     expect(() => template({ certificateArn: undefined })).toThrow("certificateArn is required");
   });
 
-  it("アカウント・プロジェクト月額上限と台帳をRuntimeへ設定する", () => {
-    const value = template({ cognitoDomainPrefix: "workmate14-budget-test", accountMonthlyBudgetUsd: "25.5", projectMonthlyBudgetUsd: "10" });
-    value.hasResourceProperties("AWS::DynamoDB::Table", Match.objectLike({ BillingMode: "PAY_PER_REQUEST" }));
+  it("アプリ月額上限をDynamoDB設定へ配置しRuntimeには集計IDだけを渡す", () => {
+    const value = template({ defaultCdkPrefix: "Stable-Budget", monthlyBudgetUsd: "25.5" });
+    value.hasResourceProperties("AWS::DynamoDB::Table", Match.objectLike({
+      BillingMode: "PAY_PER_REQUEST",
+      TimeToLiveSpecification: { AttributeName: "expiresAt", Enabled: true },
+    }));
+    const customResources = JSON.stringify(value.findResources("Custom::AWS"));
+    expect(customResources).toContain("APP#stable-budget");
+    expect(customResources).toContain("CONFIG");
+    expect(customResources).toContain("25500000000");
     value.hasResourceProperties("AWS::BedrockAgentCore::Runtime", Match.objectLike({
       EnvironmentVariables: Match.objectLike({
-        ACCOUNT_MONTHLY_BUDGET_NANO_USD: "25500000000",
-        PROJECT_MONTHLY_BUDGET_NANO_USD: "10000000000",
-        BUDGET_PROJECT_ID: "workmate-14",
+        BUDGET_SCOPE_ID: "stable-budget",
         BUDGET_TABLE_NAME: Match.anyValue(),
-        PRICING_TABLE_NAME: Match.anyValue(),
       }),
     }));
   });
 
-  it("モデル価格を専用DynamoDBテーブルへ置き、Runtimeへ読み取りだけを許可する", () => {
-    const value = template({ cognitoDomainPrefix: "workmate14-pricing-test" });
-    value.hasResourceProperties("AWS::DynamoDB::Table", Match.objectLike({
-      AttributeDefinitions: [{ AttributeName: "modelId", AttributeType: "S" }],
-      KeySchema: [{ AttributeName: "modelId", KeyType: "HASH" }],
-      BillingMode: "PAY_PER_REQUEST",
-      PointInTimeRecoverySpecification: { PointInTimeRecoveryEnabled: true },
+  it("モデル価格をVersioning付きS3へ置き、Runtimeへ読み取りだけを許可する", () => {
+    const value = template();
+    value.hasResourceProperties("AWS::S3::Bucket", Match.objectLike({
+      VersioningConfiguration: { Status: "Enabled" },
+      PublicAccessBlockConfiguration: { BlockPublicAcls: true, BlockPublicPolicy: true, IgnorePublicAcls: true, RestrictPublicBuckets: true },
+    }));
+    value.hasResourceProperties("AWS::BedrockAgentCore::Runtime", Match.objectLike({
+      EnvironmentVariables: Match.objectLike({
+        PRICING_CATALOG_BUCKET_NAME: Match.anyValue(),
+        PRICING_CATALOG_OBJECT_KEY: "catalog/model-pricing.json",
+      }),
     }));
     const policies = JSON.stringify(value.findResources("AWS::IAM::Policy"));
-    expect(policies).toContain("dynamodb:GetItem");
-    expect(policies).toContain("ModelPricingCatalog");
+    expect(policies).toContain("s3:GetObject");
+    expect(policies).toContain("PricingCatalogBucket");
   });
 
-  it("公式Price Listと日次照合し、一致時だけ48時間の確認期限を延長する", () => {
-    const value = template({ cognitoDomainPrefix: "workmate14-pricing-verifier-test" });
+  it("公式Price Listと日次照合し、不一致をログメトリクスとAlarmで通知する", () => {
+    const value = template({ priceVerificationEnabled: true });
     value.hasResourceProperties("AWS::Lambda::Function", Match.objectLike({
       Handler: "index.lambda_handler",
       Runtime: "python3.13",
       Timeout: 120,
       Environment: { Variables: Match.objectLike({
-        PRICING_TABLE_NAME: Match.anyValue(),
-        PRICING_HISTORY_TABLE_NAME: Match.anyValue(),
-        PRICE_VALIDITY_HOURS: "48",
+        PRICING_CATALOG_BUCKET_NAME: Match.anyValue(),
+        PRICING_CATALOG_OBJECT_KEY: "catalog/model-pricing.json",
       }) },
     }));
     value.hasResourceProperties("AWS::Events::Rule", Match.objectLike({
       ScheduleExpression: "cron(0 15 * * ? *)",
       State: "ENABLED",
     }));
-    value.hasResourceProperties("AWS::DynamoDB::Table", Match.objectLike({
-      AttributeDefinitions: [
-        { AttributeName: "modelId", AttributeType: "S" },
-        { AttributeName: "verificationId", AttributeType: "S" },
-      ],
-      KeySchema: [
-        { AttributeName: "modelId", KeyType: "HASH" },
-        { AttributeName: "verificationId", KeyType: "RANGE" },
-      ],
-      TimeToLiveSpecification: { AttributeName: "expiresAt", Enabled: true },
+    value.hasResourceProperties("AWS::Logs::MetricFilter", Match.objectLike({
+      FilterPattern: '{ $.event = "pricing.verification.warning" }',
+      MetricTransformations: [Match.objectLike({
+        MetricName: "PricingVerificationWarnings",
+        MetricNamespace: "agent-core-runtime-cost-control",
+        MetricValue: "1",
+      })],
+    }));
+    value.hasResourceProperties("AWS::CloudWatch::Alarm", Match.objectLike({
+      ComparisonOperator: "GreaterThanOrEqualToThreshold",
+      EvaluationPeriods: 1,
+      MetricName: "PricingVerificationWarnings",
+      Namespace: "agent-core-runtime-cost-control",
+      Threshold: 1,
+      TreatMissingData: "notBreaching",
     }));
     const templateJson = JSON.stringify(value.toJSON());
-    expect(templateJson).toContain("dynamodb:TransactWriteItems");
     expect(templateJson).toContain("pricing:GetProducts");
-    expect(templateJson).toContain("priceListInputUsageType");
-    expect(templateJson).toContain("AmazonBedrockFoundationModels");
   });
 
-  it("ユーザー上限プロファイルをCognitoグループとRuntimeへ設定する", () => {
-    const profiles = [
-      { id: "default", default: true, window: "monthly", tokenLimit: 1_000_000 },
-      { id: "daily", default: false, window: "daily", tokenLimit: 50_000 },
-    ];
-    const value = template({ userLimitProfiles: JSON.stringify(profiles) });
-    value.resourceCountIs("AWS::Cognito::UserPoolGroup", 2);
-    value.hasResourceProperties("AWS::Cognito::UserPoolGroup", Match.objectLike({ GroupName: "workmate-limit-daily" }));
-    value.hasResourceProperties("AWS::BedrockAgentCore::Runtime", Match.objectLike({
-      EnvironmentVariables: Match.objectLike({ USER_LIMIT_PROFILES_JSON: JSON.stringify(profiles) }),
+  it("価格照合を無効にした環境ではLambdaとAlarmを作らない", () => {
+    const value = template({ priceVerificationEnabled: false });
+    value.resourceCountIs("AWS::Events::Rule", 0);
+    value.resourceCountIs("AWS::CloudWatch::Alarm", 0);
+  });
+
+  it("モデル費用とトークン数の専用CloudWatch Dashboardを作る", () => {
+    const value = template();
+    value.hasResourceProperties("AWS::Logs::MetricFilter", Match.objectLike({
+      MetricTransformations: [Match.objectLike({ MetricName: "SettledModelCostUsd", MetricValue: "$.actualUsd" })],
     }));
+    value.hasResourceProperties("AWS::Logs::MetricFilter", Match.objectLike({
+      MetricTransformations: [Match.objectLike({ MetricName: "SettledModelTokens", MetricValue: "$.actualTokens" })],
+    }));
+    value.hasResourceProperties("AWS::CloudWatch::Dashboard", Match.objectLike({
+      DashboardName: "agent-core-runtime-cost-control-model-cost",
+    }));
+  });
+
+  it("旧ユーザー上限グループを再生成しない", () => {
+    const value = template();
+    value.resourceCountIs("AWS::Cognito::UserPoolGroup", 0);
   });
 
   it("デプロイスクリプト用Base64URLコンテキストを復号する", () => {
@@ -202,23 +245,30 @@ describe("WorkmateCostControlStack", () => {
     expect(() => decodeBase64UrlContext(`${encoded}=`, "profiles")).toThrow("base64url");
   });
 
-  it("既定ユーザー上限プロファイルが複数ならsynthを拒否する", () => {
-    expect(() => template({ userLimitProfiles: JSON.stringify([
-      { id: "one", default: true, window: "daily", tokenLimit: 1 },
-      { id: "two", default: true, window: "weekly", tokenLimit: 2 },
-    ]) })).toThrow("exactly one default");
-  });
-
-  it("8モデルへ推論権限を付け、未使用のCountTokens権限を付けない", () => {
+  it("Bedrockモデルへ推論と事前CountTokens権限を付ける", () => {
     const policies = JSON.stringify(template().findResources("AWS::IAM::Policy"));
     expect(policies).toContain("claude-haiku-4-5");
     expect(policies).toContain("claude-sonnet-4-6");
     expect(policies).toContain("claude-sonnet-5");
-    expect(policies).not.toContain("bedrock-mantle:CountTokens");
-    expect(policies).not.toContain('"bedrock:CountTokens"');
+    expect(policies).toContain('"bedrock:CountTokens"');
     expect(policies).toContain("nova-2-lite");
     expect(policies).toContain("gpt-oss");
+    expect(policies).toContain("gpt-5.6-luna");
+    expect(policies).toContain("project/default");
     expect(policies).toContain("glm-4.7");
+  });
+
+  it("Gemini有効時だけSecrets ManagerのAPIキー参照をRuntimeへ許可する", () => {
+    const enabled = template({
+      geminiEnabled: true,
+      geminiApiKeySecretName: "assistant/gemini-api-key",
+      enabledModelKeys: JSON.stringify(["gemini-3-5-flash"]),
+    });
+    enabled.hasResourceProperties("AWS::BedrockAgentCore::Runtime", Match.objectLike({
+      EnvironmentVariables: Match.objectLike({ GEMINI_API_KEY_SECRET_NAME: "assistant/gemini-api-key" }),
+    }));
+    expect(JSON.stringify(enabled.findResources("AWS::IAM::Policy"))).toContain("secretsmanager:GetSecretValue");
+    expect(() => template({ geminiEnabled: true })).toThrow("geminiApiKeySecretName");
   });
 
   it("不正な月額上限をsynth前に拒否する", () => {
@@ -227,7 +277,7 @@ describe("WorkmateCostControlStack", () => {
   });
 
   it("Runtime実行ロールへMemory暗号化キーの利用権限を付ける", () => {
-    const value = template({ cognitoDomainPrefix: "workmate12-test" });
+    const value = template();
     value.hasResourceProperties("AWS::IAM::Policy", Match.objectLike({
       PolicyDocument: Match.objectLike({
         Statement: Match.arrayWith([
@@ -240,33 +290,72 @@ describe("WorkmateCostControlStack", () => {
     }));
   });
 
-  it("既存Knowledge BaseだけをRuntimeへ接続する", () => {
-    const value = template({ cognitoDomainPrefix: "workmate12-test" });
-    value.hasParameter("KnowledgeBaseId", {
-      Type: "String",
-      AllowedPattern: "[0-9A-Z]{10}",
+  it("configで有効にした複数Knowledge BaseだけをRuntimeへ接続する", () => {
+    const knowledgeBases = [
+      { key: "us-docs", enabled: true, region: "us-east-1", knowledgeBaseId: "ABCDEFGHIJ", toolName: "search_us_docs", description: "US docs", numberOfResults: 4 },
+      { key: "tokyo-docs", enabled: true, region: "ap-northeast-1", knowledgeBaseId: "KLMNOPQRST", toolName: "search_tokyo_docs", description: "Tokyo docs", numberOfResults: 6 },
+      { key: "disabled-docs", enabled: false, region: "us-east-1", knowledgeBaseId: "UVWXYZ1234", toolName: "search_disabled_docs", description: "Disabled docs", numberOfResults: 5 },
+    ];
+    const value = template({
+      knowledgeBases: JSON.stringify(knowledgeBases),
+      allowCrossRegionKnowledgeBases: true,
     });
     value.hasResourceProperties("AWS::BedrockAgentCore::Runtime", Match.objectLike({
-      EnvironmentVariables: Match.objectLike({ KNOWLEDGE_BASE_ID: { Ref: "KnowledgeBaseId" } }),
+      EnvironmentVariables: Match.objectLike({ KNOWLEDGE_BASES_JSON: JSON.stringify(knowledgeBases) }),
     }));
     const policies = value.findResources("AWS::IAM::Policy");
     const statements = Object.values(policies).flatMap((policy) => policy.Properties.PolicyDocument.Statement);
     const retrieveStatements = statements.filter((statement) => statement.Action === "bedrock:Retrieve");
     expect(retrieveStatements).toHaveLength(1);
-    expect(JSON.stringify(retrieveStatements[0].Resource)).toContain("knowledge-base/");
-    expect(JSON.stringify(retrieveStatements[0].Resource)).toContain('"Ref":"KnowledgeBaseId"');
-    expect(JSON.stringify(retrieveStatements[0].Resource)).not.toContain("knowledge-base/*");
+    const resources = JSON.stringify(retrieveStatements[0].Resource);
+    expect(resources).toContain(":bedrock:us-east-1:123456789012:knowledge-base/ABCDEFGHIJ");
+    expect(resources).toContain(":bedrock:ap-northeast-1:123456789012:knowledge-base/KLMNOPQRST");
+    expect(resources).not.toContain("UVWXYZ1234");
+  });
+
+  it("Knowledge Baseのリージョン越境は明示許可なしでは拒否する", () => {
+    expect(() => template({
+      knowledgeBases: JSON.stringify([{
+        key: "tokyo-docs", enabled: true, region: "ap-northeast-1", knowledgeBaseId: "KLMNOPQRST",
+        toolName: "search_tokyo_docs", description: "Tokyo docs", numberOfResults: 5,
+      }]),
+    })).toThrow("AllowCrossRegionKnowledgeBases=true");
+  });
+
+  it("Gateway Lambdaの実行設定をconfigから適用する", () => {
+    const value = template({ gatewayTargets: JSON.stringify([{
+      key: "support-directory",
+      enabled: true,
+      timeoutSeconds: 12,
+      memorySizeMb: 256,
+      environmentVariables: { DIRECTORY_MODE: "readonly" },
+    }]) });
+    value.hasResourceProperties("AWS::Lambda::Function", Match.objectLike({
+      FunctionName: "agent-core-runtime-cost-control-support-directory-tool",
+      Timeout: 12,
+      MemorySize: 256,
+      Environment: { Variables: { DIRECTORY_MODE: "readonly" } },
+    }));
+    expect(value.toJSON().Resources.GatewayTool7C2912AF).toBeDefined();
+    value.resourceCountIs("AWS::BedrockAgentCore::GatewayTarget", 1);
+  });
+
+  it("Gateway targetの未知キーを拒否する", () => {
+    expect(() => template({ gatewayTargets: JSON.stringify([{
+      key: "unknown-tool", enabled: true, timeoutSeconds: 5, memorySizeMb: 128, environmentVariables: {},
+    }]) })).toThrow("unknown catalog key");
   });
 
   it("Entraオプション有効時だけOIDC IdPを追加する", () => {
+    expect(template().toJSON().Outputs?.EntraRedirectUri).toBeUndefined();
     const value = template({
-      cognitoDomainPrefix: "workmate12-entra-test",
       entraEnabled: true,
       entraTenantId: "00000000-0000-0000-0000-000000000001",
       entraClientId: "00000000-0000-0000-0000-000000000002",
-      entraClientSecretName: "workmate12/entra/client-secret",
+      entraClientSecretName: "sample/entra/client-secret",
     });
     value.resourceCountIs("AWS::Cognito::UserPoolIdentityProvider", 1);
+    expect(value.toJSON().Outputs?.EntraRedirectUri).toBeDefined();
     value.hasResourceProperties("AWS::Cognito::UserPoolIdentityProvider", {
       ProviderName: "MicrosoftEntraID",
       ProviderType: "OIDC",
@@ -283,12 +372,12 @@ describe("WorkmateCostControlStack", () => {
   });
 
   it("Entraを無効にしたままEntra表示を指定すればsynthを拒否する", () => {
-    expect(() => template({ cognitoDomainPrefix: "workmate12-test", loginMethods: "entra" }))
+    expect(() => template({ loginMethods: "entra" }))
       .toThrow("requires entraEnabled=true");
   });
 
   it("未知のloginMethodsはsynthを拒否する", () => {
-    expect(() => template({ cognitoDomainPrefix: "workmate12-test", loginMethods: "saml" }))
+    expect(() => template({ loginMethods: "saml" }))
       .toThrow("loginMethods must be one of");
   });
 
@@ -320,7 +409,7 @@ describe("WorkmateCostControlStack", () => {
 
 describe("ログ出力", () => {
   it("既定で保持期間3日のロググループとAPPLICATION_LOGS/USAGE_LOGSの配信を作る", () => {
-    const value = template({ cognitoDomainPrefix: "workmate12-test" });
+    const value = template();
     value.hasResourceProperties("AWS::Logs::LogGroup", Match.objectLike({ RetentionInDays: 3 }));
     value.resourceCountIs("AWS::Logs::Delivery", 2);
     const sources = value.findResources("AWS::Logs::DeliverySource");
@@ -329,7 +418,7 @@ describe("ログ出力", () => {
   });
 
   it("実行ロールへCloudWatch Logsの書き込み権限を付ける", () => {
-    const value = template({ cognitoDomainPrefix: "workmate12-test" });
+    const value = template();
     value.hasResourceProperties("AWS::IAM::Policy", Match.objectLike({
       PolicyDocument: Match.objectLike({
         Statement: Match.arrayWith([
@@ -340,8 +429,11 @@ describe("ログ出力", () => {
   });
 
   it("logRetentionDaysで保持期間を変更できる", () => {
-    template({ cognitoDomainPrefix: "workmate12-test", logRetentionDays: 30 })
-      .hasResourceProperties("AWS::Logs::LogGroup", Match.objectLike({ RetentionInDays: 30 }));
+    const value = template({ logRetentionDays: 30 });
+    value.hasResourceProperties("AWS::Logs::LogGroup", Match.objectLike({ RetentionInDays: 30 }));
+    const logGroups = Object.values(value.findResources("AWS::Logs::LogGroup"));
+    expect(logGroups.every((resource) => resource.Properties.RetentionInDays === 30)).toBe(true);
+    expect(JSON.stringify(logGroups)).toContain("/aws/bedrock-agentcore/runtimes/");
   });
 
   it("CloudWatch Logsが受け付けない保持期間は拒否する", () => {
@@ -351,21 +443,21 @@ describe("ログ出力", () => {
   });
 
   it("種別ごとのログをデプロイ時に無効化できる", () => {
-    template({ cognitoDomainPrefix: "workmate12-test", runtimeLogModel: "off", runtimeLogTool: "off" })
+    template({ runtimeLogModel: "off", runtimeLogTool: "off" })
       .hasResourceProperties("AWS::BedrockAgentCore::Runtime", Match.objectLike({
         EnvironmentVariables: Match.objectLike({ RUNTIME_LOG_MODEL: "off", RUNTIME_LOG_TOOL: "off" }),
       }));
   });
 
   it("未指定の種別は環境変数を設定せず既定の有効のままにする", () => {
-    const runtimes = template({ cognitoDomainPrefix: "workmate12-test" }).findResources("AWS::BedrockAgentCore::Runtime");
+    const runtimes = template().findResources("AWS::BedrockAgentCore::Runtime");
     const environment = Object.values(runtimes)[0]?.Properties.EnvironmentVariables ?? {};
     expect(environment).not.toHaveProperty("RUNTIME_LOG_MODEL");
     expect(environment).not.toHaveProperty("RUNTIME_LOG_TOOL");
   });
 
   it("on/off以外の指定は拒否する", () => {
-    expect(() => template({ cognitoDomainPrefix: "workmate12-test", runtimeLogModel: "maybe" })).toThrow("must be on or off");
+    expect(() => template({ runtimeLogModel: "maybe" })).toThrow("must be on or off");
   });
 });
 

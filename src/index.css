@@ -77,8 +77,9 @@
 }
 
 * { border-color: var(--border); }
-html, body { height: 100%; }
-body { margin: 0; background: var(--background); color: var(--foreground); font-family: var(--font-sans); }
+html, body, #root { height: 100%; width: 100%; overflow: hidden; }
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+body { margin: 0; overscroll-behavior: none; background: var(--background); color: var(--foreground); font-family: var(--font-sans); }
 button, [role="button"] { cursor: pointer; }
 button:disabled, [role="button"][aria-disabled="true"] { cursor: default; }
 

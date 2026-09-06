@@ -1,11 +1,11 @@
 # フォルダ構成
 
-この資料は、リポジトリ内のソースコード、インフラ、テスト、生成物の配置意図を説明する。
+この資料は、本リポジトリのソースコード、インフラ、テスト、生成物の配置意図を説明する。
 
 ## 全体構成
 
 <pre>
-repository-root/
+strands-agentcore_assistant-ui_cost-control/
 ├─ <strong><u>src/                              ブラウザで動くReactフロントエンドのソースコード</u></strong>
 │  ├─ components/                   画面固有のReactコンポーネント
 │  │  ├─ <em>runtime/                  assistant-uiとAgentCore Runtimeの通信・状態管理を接続するコード</em>
@@ -17,14 +17,14 @@ repository-root/
 │  ├─ scripts/                      Runtimeのビルド、ZIP作成、単体デプロイを行うスクリプト
 │  └─ dist/                         Runtimeのビルドで生成されるJavaScript
 ├─ <strong><u>gateway-tool/                     AgentCore Gateway経由で実行する問い合わせ先検索Lambda</u></strong>
+├─ <strong><u>pricing-verifier/                 公式AWS Price Listと価格マスタを日次照合するLambda</u></strong>
 ├─ <strong><u>infrastructure/                   CloudFront、Cognito、AgentCoreなどを作成するAWS CDK定義</u></strong>
-├─ <strong><u>shared/                           ログイン方式、モデル、ユーザー上限プロファイルの共通定義</u></strong>
-├─ <strong><u>scripts/                          デプロイ、Cognitoユーザー、上限プロファイル、Entra IDの運用スクリプト</u></strong>
+├─ <strong><u>shared/                           ログイン方式、モデル、価格表の共通定義</u></strong>
+├─ <strong><u>scripts/                          JSONデプロイ、費用復旧、Cognitoユーザー、Entra IDの運用スクリプト</u></strong>
 │  └─ entra/                        Entra IDアプリの登録、権限付与、シークレット更新を行うPowerShellスクリプト
 ├─ <strong><u>test/                             UIロジック、共有定義、CDKテンプレートの回帰テスト</u></strong>
 ├─ <strong><u>public/                           Viteがそのまま配信物へコピーするローカル開発用設定</u></strong>
 ├─ <strong><u>doc/                              デプロイ、機能、セキュリティ、フォルダ構成の説明資料</u></strong>
-│  └─ images/                       Markdown文書から参照する構成図
 ├─ <strong><u>dist/                             フロントエンドのビルドで生成される静的配信物</u></strong>
 ├─ <strong><u>cdk.out*/                         CDK synthで生成されるCloudFormationテンプレートとアセット</u></strong>
 ├─ <strong><u>package.json                      ルートで実行するビルド、テスト、デプロイコマンドの定義</u></strong>
@@ -44,15 +44,15 @@ repository-root/
 |---|---|---|
 | `src/` | ブラウザで動くUI | Cognitoログイン、会話一覧、チャット表示、AG-UI通信 |
 | `src/components/runtime/` | UIとRuntimeの接続境界 | JWTを付けたRuntime呼び出し、推論設定、タブ内のスレッド表示状態 |
-| `runtime/src/` | AgentCore Runtimeのアプリケーション | AG-UI SSE、Bedrock推論、厳密なトークン計数、費用・ユーザー上限台帳、チャット履歴、長期記憶、Gatewayツール |
+| `runtime/src/` | AgentCore Runtimeのアプリケーション | AG-UI SSE、Bedrock・Gemini推論、S3価格表、費用台帳、チャット履歴、長期記憶、Gatewayツール |
 | `runtime/integration/` | Runtimeの外部境界を含む検証 | invocations入力やバリデーションの結合テスト |
 | `gateway-tool/` | AgentCore GatewayのLambdaターゲット | 問い合わせ先検索ツールとNode.js標準テスト |
 | `infrastructure/` | AWSリソースの唯一の定義 | CloudFront、S3、Cognito、Runtime、Memory、Gateway、Lambda、IAM、ログ |
-| `shared/` | 複数レイヤーで一致させる定義 | ログイン方式、モデルカタログ、ユーザー上限プロファイルの検証 |
-| `scripts/` | デプロイと構築後の管理作業 | 設定ファイル経由のCDKデプロイ、Cognitoユーザー・上限プロファイル管理、Entra操作 |
+| `shared/` | 複数レイヤーで一致させる定義 | ログイン方式、モデルカタログ、S3価格カタログ初期値 |
+| `scripts/` | デプロイと構築後の管理作業 | JSON configによるCDKデプロイ、Cognitoユーザー、費用台帳の管理、Entra操作 |
 | `test/` | ルート側の回帰テスト | UIロジック、設定、CDKテンプレートの検証 |
 | `public/` | 開発時の静的ファイル | ローカル用`runtime-config.json` |
-| `doc/` | 利用者・開発者向け資料 | デプロイ、セキュリティ、フォルダ構成、構成図 |
+| `doc/` | 利用者・開発者向け資料 | デプロイ、セキュリティ、フォルダ構成 |
 
 ## 下位階層まで見れば変更箇所を特定できる
 
@@ -71,8 +71,8 @@ repository-root/
 
 | パス | 責務 | 代表ファイル |
 |---|---|---|
-| `runtime/src/` | AgentCore Runtimeで動くアプリケーション本体 | `main.ts`、`app.ts`、`model-factory.ts`、`token-counter.ts`、`budget-ledger.ts`、`memory.ts`、`tools.ts` |
-| `runtime/src/*.test.ts` | 各Runtimeモジュールを同じ階層で単体検証する | 認証、CountTokens、費用・ユーザー上限、履歴、Memory、ログ、モデル、イベント変換のテスト |
+| `runtime/src/` | AgentCore Runtimeで動くアプリケーション本体 | `main.ts`、`app.ts`、`model-factory.ts`、`pricing-catalog.ts`、`budget-ledger.ts`、`memory.ts`、`tools.ts` |
+| `runtime/src/*.test.ts` | 各Runtimeモジュールを同じ階層で単体検証する | 認証、CountTokens、月額費用、冪等性、履歴、Memory、ログ、モデル、イベント変換のテスト |
 | `runtime/integration/` | HTTPの`/invocations`境界と実行入力を結合検証する | `invocations.test.ts`、`validation.test.ts`、`server-only.ts` |
 | `runtime/scripts/` | Runtimeをビルドし、CodeZip用ZIPを作成・配置する | `build.mjs`、`package.mjs`、`deploy.ts` |
 | `runtime/package.json` | Runtimeだけの依存関係とNode.js 22向けコマンドを固定する | build、package、test、deploy、dev |
@@ -84,8 +84,9 @@ repository-root/
 |---|---|---|
 | `gateway-tool/` | GatewayのLambdaターゲットとそのテストを置く | `index.mjs`、`index.node-test.mjs` |
 | `infrastructure/` | CDKアプリを起動し、全AWSリソースを定義する | `app.ts`、`stack.ts` |
-| `shared/` | UI、Runtime、CDKで同じ値を使う定義を一元化する | `login-methods.ts`、`model-catalog.ts`、`user-limit-profiles.ts` |
-| `scripts/` | デプロイ設定を渡し、Cognitoユーザーと上限プロファイルを管理する | `Deploy-Workmate.ps1`、`deploy-config.example.psd1`、`manage-cognito-user.mjs` |
+| `shared/` | UI、Runtime、CDKで同じ値を使う定義を一元化する | `login-methods.ts`、`model-catalog.ts`、`initial-model-pricing.ts` |
+| `pricing-verifier/` | 公式価格の自動照合Lambdaと単体テスト | `index.py`、`test_index.py` |
+| `scripts/` | デプロイ設定を渡し、Cognitoユーザーと費用状態を管理する | `deploy.mjs`、`manage-cognito-user.mjs`、`manage-budget.mjs` |
 | `scripts/entra/` | Microsoft Graph経由でEntra OIDCアプリを管理する | `New-EntraCognitoOidcApplication.ps1`、`Update-EntraCognitoOidcRedirectUri.ps1`など |
 | `test/` | UIロジック、共有定義、CDKテンプレートを回帰検証する | `config.test.ts`、`login-methods.test.ts`、`infrastructure.test.ts` |
 | `public/` | ローカル開発時にViteがそのまま配信する静的設定を置く | `runtime-config.json` |
@@ -122,7 +123,7 @@ Runtimeの依存関係とビルドはルートから分離している。`npm ru
 
 ## インフラとデプロイ
 
-`infrastructure/app.ts`がCDKアプリの起点で、AWSリソースは`infrastructure/stack.ts`の`WorkmateCostControlStack`へ集約している。
+`infrastructure/app.ts`がCDKアプリの起点で、AWSリソースは`infrastructure/stack.ts`の`AgentCoreCostControlStack`へ集約している。
 
 ```text
 src/ ── npm run build ──> dist/
@@ -134,7 +135,7 @@ infrastructure/stack.ts ── CDK deploy
   ├─ dist/をWeb用S3へ配置しCloudFrontから配信
   ├─ runtime-config.jsonを実AWSリソースの値で生成
   ├─ Runtime ZIPを専用S3へ配置してAgentCore Runtimeを更新
-  ├─ DynamoDB費用・ユーザー上限台帳とCognito上限グループを作成
+  ├─ DynamoDB費用台帳、モデル価格マスタ、Cognito上限グループを作成
   ├─ オプション有効時だけCloudFront独自ドメインとRoute 53 Alias Aを設定
   └─ Gateway Lambdaをgateway-tool/からパッケージ
 ```
@@ -159,9 +160,9 @@ infrastructure/stack.ts ── CDK deploy
 |---|---|
 | 画面、チャットUI、ログイン表示 | `src/components/`、`src/index.css` |
 | モデル選択肢 | `shared/model-catalog.ts` |
-| CountTokens経路と費用予約 | `runtime/src/token-counter.ts`、`runtime/src/model-factory.ts`、`runtime/src/budget-ledger.ts` |
-| ユーザー上限プロファイル | `shared/user-limit-profiles.ts`、`runtime/src/auth.ts`、`runtime/src/budget-ledger.ts`、`scripts/manage-cognito-user.mjs` |
-| カスタムドメイン | `infrastructure/stack.ts`、`scripts/deploy-config.example.psd1` |
+| S3価格表と月額費用制御 | `shared/initial-model-pricing.ts`、`runtime/src/pricing-catalog.ts`、`runtime/src/model-factory.ts`、`runtime/src/budget-ledger.ts` |
+| usage不明時の記録 | `runtime/src/model-factory.ts`、`runtime/src/budget-ledger.ts` |
+| カスタムドメイン | `infrastructure/stack.ts`、`scripts/deploy-config.*.example.json` |
 | ログイン方式 | `shared/login-methods.ts`、`src/config.ts`、`infrastructure/stack.ts` |
 | チャット履歴・長期記憶 | `runtime/src/history.ts`、`runtime/src/memory.ts` |
 | プロンプトやモデル実行 | `runtime/src/system-prompt.ts`、`runtime/src/model-factory.ts` |
@@ -172,6 +173,8 @@ infrastructure/stack.ts ── CDK deploy
 | Runtimeの実装機能 | `doc/runtime-features.md` |
 | UIの実装機能 | `doc/ui-features.md` |
 | セキュリティ制約 | `SECURITY.md`、`doc/security-notes.md` |
+| 設計理由・実装上の知見 | `doc/design-decisions-and-lessons.md` |
+| AWSume・AssumeRoleの運用知見 | `doc/awsume-assumerole-knowledge.md` |
 
 ## 配置ルール
 

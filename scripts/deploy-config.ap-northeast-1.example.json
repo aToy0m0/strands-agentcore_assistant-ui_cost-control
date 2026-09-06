@@ -1,0 +1,40 @@
+{
+  "profile": "cdkdep",
+  "region": "ap-northeast-1",
+  "defaultCdkPrefix": "Agent-Core-Runtime_Cost-control-Tokyo",
+  "runtimeDisplayName": "AIエージェント",
+  "webDebugMode": "off",
+  "customDomainEnabled": false,
+  "allowCrossRegionKnowledgeBases": false,
+  "knowledgeBases": [
+    {
+      "key": "internal-documents",
+      "enabled": true,
+      "region": "ap-northeast-1",
+      "knowledgeBaseId": "ABCDEFGHIJ",
+      "toolName": "search_internal_documents",
+      "description": "社内文書を検索する",
+      "numberOfResults": 5
+    }
+  ],
+  "gatewayTargets": [
+    {
+      "key": "support-directory",
+      "enabled": true,
+      "timeoutSeconds": 5,
+      "memorySizeMb": 128,
+      "environmentVariables": {}
+    }
+  ],
+  "geminiEnabled": true,
+  "geminiApiKeySecretName": "sample/gemini-api-key",
+  "enabledModelKeys": ["gemini-3-5-flash"],
+  "entraEnabled": false,
+  "loginMethods": "cognito",
+  "logRetentionDays": 180,
+  "runtimeLogRequest": "off",
+  "runtimeLogModel": "off",
+  "runtimeLogTool": "on",
+  "monthlyBudgetUsd": "60",
+  "priceVerificationEnabled": true
+}

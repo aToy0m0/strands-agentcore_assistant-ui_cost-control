@@ -14,7 +14,7 @@ export type AgentOutputEvent =
   | { type: "interrupt"; interrupts: Array<{ id: string; reason: string; message?: string; metadata?: Record<string, unknown> }> }
   | { type: "text"; text: string };
 
-export type InvocationIdentity = { actorId: string; authorization: string; limitProfileId?: string };
+export type InvocationIdentity = { actorId: string; authorization: string };
 export type StreamAgent = (input: RunAgentInput, cancelSignal: AbortSignal, identity: InvocationIdentity) => AsyncIterable<AgentOutputEvent>;
 
 const historyOperationSchema = z.discriminatedUnion("operation", [

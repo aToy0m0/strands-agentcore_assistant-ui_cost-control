@@ -19,7 +19,6 @@ const input = {
   forwardedProps: { inference: { model: "claude-haiku-4-5", reasoning: { enabled: true, effort: "medium" } } },
 };
 const authorization = `Bearer header.${Buffer.from(JSON.stringify({ sub: "user-123" })).toString("base64url")}.signature`;
-const profiledAuthorization = `Bearer header.${Buffer.from(JSON.stringify({ sub: "user-123", "cognito:groups": ["workmate-limit-daily"] })).toString("base64url")}.signature`;
 
 function eventsFrom(text: string): Array<Record<string, unknown>> {
   return text.split(/\r?\n/u)
@@ -75,14 +74,6 @@ describe("AgentCore HTTP contract", () => {
     expect(response.text).toContain('"delta":"3"');
     expect(response.text).toContain('"delta":"です。"');
     expect(response.text).toContain(EventType.RUN_FINISHED);
-  });
-
-  it("Cognitoグループのユーザー上限プロファイルを実行IDへ渡す", async () => {
-    const invokeAgent = vi.fn(async function* (_input: RunAgentInput, _cancelSignal: AbortSignal, _identity: InvocationIdentity) {
-      yield { type: "text" as const, text: "ok" };
-    });
-    await request(createApp(invokeAgent)).post("/invocations").set("Authorization", profiledAuthorization).send(input).expect(200);
-    expect(invokeAgent.mock.calls[0]?.[2]).toEqual({ actorId: "user-123", authorization: profiledAuthorization, limitProfileId: "daily" });
   });
 
   it("returns RUN_ERROR in the stream when agent invocation fails", async () => {

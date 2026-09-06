@@ -36,7 +36,7 @@ import type { ReasoningEffort } from "@/lib/runtime-options";
 
 const iconButton = "grid size-8 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
-export function ChatThread({ agent, selectedProject, onClearSelectedProject }: { agent: AgentProfile; selectedProject?: Project; onClearSelectedProject: () => void }) {
+export function ChatThread({ agent, selectedProject, keyboardOpen, onClearSelectedProject }: { agent: AgentProfile; selectedProject?: Project; keyboardOpen: boolean; onClearSelectedProject: () => void }) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const messageCount = useAuiState((state) => state.thread.messages.length);
   const [hasScrollableOverflow, setHasScrollableOverflow] = useState(false);
@@ -58,20 +58,29 @@ export function ChatThread({ agent, selectedProject, onClearSelectedProject }: {
     };
   }, [messageCount]);
 
+  useEffect(() => {
+    if (!keyboardOpen) return;
+    const frame = requestAnimationFrame(() => {
+      const viewport = viewportRef.current;
+      if (viewport) viewport.scrollTop = viewport.scrollHeight;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [keyboardOpen]);
+
   return (
-    <ThreadPrimitive.Root role="region" className="relative flex min-h-0 flex-1 flex-col" aria-label={`${agent.name}との会話`}>
+    <ThreadPrimitive.Root role="region" className="relative flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden" aria-label={`${agent.name}との会話`}>
       <AuiIf condition={(state) => state.thread.messages.length === 0}><Welcome selectedProject={selectedProject} onClearSelectedProject={onClearSelectedProject} /></AuiIf>
       <AuiIf condition={(state) => state.thread.messages.length > 0}>
-        <ThreadPrimitive.Viewport ref={viewportRef} className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4" turnAnchor="top">
-          <div className="mx-auto w-full max-w-3xl flex-1 py-8">
+        <ThreadPrimitive.Viewport ref={viewportRef} className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain px-3 sm:px-4" turnAnchor="top">
+          <div className="mx-auto w-full max-w-3xl flex-1 py-4 sm:py-8">
             <ThreadPrimitive.Messages>
               {({ message }) => message.composer.isEditing ? <EditComposer /> : message.role === "user" ? <UserMessage /> : <AssistantMessage />}
             </ThreadPrimitive.Messages>
           </div>
-          <ThreadPrimitive.ViewportFooter className="sticky bottom-0 mx-auto w-full max-w-3xl bg-gradient-to-t from-background via-background via-80% to-transparent pb-3 pt-8">
+          <ThreadPrimitive.ViewportFooter className={cn("sticky bottom-0 mx-auto w-full max-w-3xl bg-gradient-to-t from-background via-background via-80% to-transparent", keyboardOpen ? "pb-1 pt-2" : "pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-4 sm:pt-8")}>
             {hasScrollableOverflow && <ThreadPrimitive.ScrollToBottom className="absolute -top-2 left-1/2 grid size-9 -translate-x-1/2 place-items-center rounded-full border bg-background shadow-md" aria-label="一番下へ移動"><ArrowDown className="size-4" /></ThreadPrimitive.ScrollToBottom>}
             <FollowupSuggestions />
-            <Composer placeholder="メッセージ" />
+            <Composer placeholder="メッセージ" compact={keyboardOpen} />
           </ThreadPrimitive.ViewportFooter>
         </ThreadPrimitive.Viewport>
       </AuiIf>
@@ -81,7 +90,7 @@ export function ChatThread({ agent, selectedProject, onClearSelectedProject }: {
 
 function Welcome({ selectedProject, onClearSelectedProject }: { selectedProject?: Project; onClearSelectedProject: () => void }) {
   return (
-    <div className="flex min-h-0 flex-1 overflow-y-auto px-4">
+    <div className="flex min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain px-3 sm:px-4">
       <div className="mx-auto flex w-full max-w-[690px] flex-col justify-center py-16 sm:py-24 lg:py-32">
         <div className="mb-7 text-center">
           <h1 className="text-2xl font-normal tracking-tight sm:text-[28px]">お手伝いできることはありますか？</h1>
@@ -93,8 +102,9 @@ function Welcome({ selectedProject, onClearSelectedProject }: { selectedProject?
   );
 }
 
-function Composer({ placeholder, elevated = false }: { placeholder: string; elevated?: boolean }) {
+function Composer({ placeholder, elevated = false, compact = false }: { placeholder: string; elevated?: boolean; compact?: boolean }) {
   const api = useAui();
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const photoInputRef = useRef<HTMLInputElement>(null);
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
@@ -142,23 +152,29 @@ function Composer({ placeholder, elevated = false }: { placeholder: string; elev
     }
   }
 
+  function closeMobileKeyboardAfterSubmit() {
+    if (!window.matchMedia("(max-width: 767px)").matches) return;
+    requestAnimationFrame(() => inputRef.current?.blur());
+  }
+
   return (
     <>
     <div>
-      <ComposerPrimitive.Root data-testid="composer" className={cn("rounded-[26px] border bg-background p-1.5 transition-shadow focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/15", elevated && "shadow-[0_10px_35px_rgb(0_0_0/0.1)]")}>
+      <ComposerPrimitive.Root data-testid="composer" onSubmitCapture={closeMobileKeyboardAfterSubmit} className={cn("rounded-[26px] border bg-background p-1.5 transition-shadow focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/15", elevated && "shadow-[0_10px_35px_rgb(0_0_0/0.1)]")}>
         <AuiIf condition={(state) => state.composer.attachments.length > 0}>
           <div className="px-2 pt-2"><ComposerPrimitive.Attachments>{() => <AttachmentCard removable />}</ComposerPrimitive.Attachments></div>
         </AuiIf>
         <div className="flex min-h-12 w-full items-end gap-1">
-          <ComposerPrimitive.Input rows={1} placeholder={placeholder} className="max-h-36 min-h-12 min-w-0 flex-1 resize-none bg-transparent px-3 py-3 text-[15px] outline-none placeholder:text-muted-foreground" aria-label="メッセージ" />
+          <ComposerPrimitive.Input ref={inputRef} rows={1} placeholder={placeholder} className="max-h-36 min-h-12 min-w-0 flex-1 resize-none bg-transparent px-3 py-3 text-base outline-none placeholder:text-muted-foreground md:text-[15px]" aria-label="メッセージ" />
           <AuiIf condition={(state) => state.thread.isRunning}><ComposerPrimitive.Cancel className="mb-1 grid size-9 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground" aria-label="生成を停止"><Square className="size-3.5" fill="currentColor" /></ComposerPrimitive.Cancel></AuiIf>
           <AuiIf condition={(state) => !state.thread.isRunning && state.composer.dictation != null}><ComposerPrimitive.StopDictation className="mb-1 grid size-9 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground" aria-label="音声入力を停止"><Square className="size-3.5" fill="currentColor" /></ComposerPrimitive.StopDictation></AuiIf>
           <AuiIf condition={(state) => !state.thread.isRunning && state.composer.dictation == null && !state.composer.isEmpty}><ComposerPrimitive.Send className="mb-1 grid size-9 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground" aria-label="送信"><ArrowUp className="size-5" /></ComposerPrimitive.Send></AuiIf>
           <AuiIf condition={(state) => state.thread.capabilities.dictation && !state.thread.isRunning && state.composer.dictation == null && state.composer.isEmpty}><button type="button" className="mb-1 grid size-9 shrink-0 place-items-center rounded-full bg-amber-400 text-white" aria-label="音声で入力" onClick={() => void startVoiceInput()}><AudioWaveform className="size-4" /></button></AuiIf>
         </div>
       </ComposerPrimitive.Root>
-      <div className="grid min-h-9 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 px-2 pt-1.5">
-        <p className="text-left text-[11px] leading-4 text-muted-foreground">AIの回答には誤りが含まれる場合があります。重要な情報は確認してください。</p>
+      <div className={cn("grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 px-2", compact ? "min-h-8 pt-0" : "min-h-9 pt-1.5")}>
+        {!compact && <p className="text-left text-[11px] leading-4 text-muted-foreground">AIの回答には誤りが含まれる場合があります。重要な情報は確認してください。</p>}
+        {compact && <span aria-hidden="true" />}
         <div className="flex shrink-0 items-center justify-end gap-1">
           <InferenceControls />
         <Popover open={attachmentMenuOpen} onOpenChange={setAttachmentMenuOpen}>
@@ -242,7 +258,7 @@ function CameraCaptureDialog({ onClose, onCapture }: { onClose: () => void; onCa
 
 function UserMessage() {
   return (
-    <MessagePrimitive.Root className="group mb-8 flex flex-col items-end">
+    <MessagePrimitive.Root className="group mb-5 flex flex-col items-end sm:mb-8">
       <MessagePrimitive.Attachments>{() => <AttachmentCard />}</MessagePrimitive.Attachments>
       <div data-testid="user-bubble" className="max-w-[85%] rounded-3xl bg-secondary px-4 py-2.5 text-[15px] [&_.aui-md>p]:m-0"><MessagePrimitive.Parts /></div>
       <ActionBarPrimitive.Root className="mt-1 flex opacity-0 transition-opacity group-hover:opacity-100" autohide="always" hideWhenRunning>
@@ -257,7 +273,7 @@ function UserMessage() {
 function EditComposer() {
   return (
     <ComposerPrimitive.Root className="mb-8 w-full rounded-2xl border bg-background p-3 shadow-sm">
-      <ComposerPrimitive.Input className="min-h-24 w-full resize-none bg-transparent p-2 outline-none" aria-label="メッセージを編集" />
+      <ComposerPrimitive.Input className="min-h-24 w-full resize-none bg-transparent p-2 text-base outline-none md:text-sm" aria-label="メッセージを編集" />
       <div className="mt-2 flex justify-end gap-2"><ComposerPrimitive.Cancel className="rounded-lg border px-3 py-2 text-sm">キャンセル</ComposerPrimitive.Cancel><ComposerPrimitive.Send className="rounded-lg bg-primary px-3 py-2 text-sm text-primary-foreground">送信</ComposerPrimitive.Send></div>
     </ComposerPrimitive.Root>
   );
@@ -265,7 +281,7 @@ function EditComposer() {
 
 function AssistantMessage() {
   return (
-    <MessagePrimitive.Root data-testid="assistant-message" className="group mb-10">
+    <MessagePrimitive.Root data-testid="assistant-message" className="group mb-6 sm:mb-10">
       <div className="text-[15px]">
         <MessagePrimitive.GroupedParts
           groupBy={groupPartByType({
@@ -324,7 +340,7 @@ function AskUserPrompt() {
       })));
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : "回答を送信できませんでした";
-      window.dispatchEvent(new CustomEvent("workmate-error", { detail: message }));
+      window.dispatchEvent(new CustomEvent("agent-error", { detail: message }));
       setSubmitting(false);
     }
   };
@@ -339,7 +355,7 @@ function AskUserPrompt() {
         const metadata = interrupt.metadata ?? {};
         const options = Array.isArray(metadata.options) ? metadata.options.filter((option): option is string => typeof option === "string") : [];
         const allowFreeText = metadata.allowFreeText !== false;
-        return <fieldset key={interrupt.id} disabled={submitting}><legend className="font-medium">{interrupt.message ?? "確認させてください。"}</legend>{options.length > 0 && <div className="mt-3 flex flex-wrap gap-2">{options.map((option) => <Button key={option} type="button" variant={answers[interrupt.id] === option ? "default" : "outline"} onClick={() => setAnswers((current) => ({ ...current, [interrupt.id]: option }))}>{option}</Button>)}</div>}{allowFreeText && <input className="mt-3 w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" value={answers[interrupt.id] ?? ""} onChange={(event) => setAnswers((current) => ({ ...current, [interrupt.id]: event.target.value }))} aria-label="質問への回答" placeholder="回答を入力" />}</fieldset>;
+        return <fieldset key={interrupt.id} disabled={submitting}><legend className="font-medium">{interrupt.message ?? "確認させてください。"}</legend>{options.length > 0 && <div className="mt-3 flex flex-wrap gap-2">{options.map((option) => <Button key={option} type="button" variant={answers[interrupt.id] === option ? "default" : "outline"} onClick={() => setAnswers((current) => ({ ...current, [interrupt.id]: option }))}>{option}</Button>)}</div>}{allowFreeText && <input className="mt-3 w-full rounded-lg border bg-background px-3 py-2 text-base outline-none focus-visible:ring-2 focus-visible:ring-ring md:text-sm" value={answers[interrupt.id] ?? ""} onChange={(event) => setAnswers((current) => ({ ...current, [interrupt.id]: event.target.value }))} aria-label="質問への回答" placeholder="回答を入力" />}</fieldset>;
       })}
       <Button type="submit" disabled={!canSubmit || submitting}>{submitting ? "送信中…" : "回答して続ける"}</Button>
     </form>

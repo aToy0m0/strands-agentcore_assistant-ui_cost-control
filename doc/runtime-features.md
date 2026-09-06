@@ -4,7 +4,7 @@
 
 ## Runtimeの役割
 
-Runtimeはブラウザから受け取ったAG-UIリクエストを認証ユーザーの処理として実行し、Bedrockモデル、AgentCore Memory、AgentCore Gatewayを組み合わせて応答します。
+Runtimeはブラウザから受け取ったAG-UIリクエストを認証ユーザーの処理として実行し、BedrockまたはGoogle Geminiモデル、AgentCore Memory、AgentCore Gatewayを組み合わせて応答します。
 
 ```text
 Browser
@@ -32,7 +32,7 @@ Browser
 | 履歴 | 会話削除 | 対象スレッドのMemoryイベントを削除 |
 | 個人メモリ | 長期記憶検索 | ユーザー固有の事実と好みを意味検索し、システムプロンプトへ追加 |
 | ツール | 組み込みツール | 計算、日時、文字統計、ユーザーへの確認を提供 |
-| ツール | Knowledge Base検索 | デプロイ時に指定したKnowledge Baseへ`Retrieve`を実行し、本文と出典を返す |
+| ツール | Knowledge Base検索 | configで有効にした複数Knowledge Baseへ個別の検索ツールとして`Retrieve`を実行し、本文と出典を返す |
 | ツール | Gateway連携 | Cognitoトークンを引き継ぎ、MCPでGatewayターゲットを利用 |
 | Human in the loop | 実行中断と再開 | `ask_user`で実行を中断し、AG-UIのresume入力で同じAgentを再開 |
 | ログ | 構造化ログ | request、model、tool、errorを1行JSONで出力 |
@@ -67,16 +67,18 @@ Browser
 | Claude Sonnet 5 | Anthropic | 常時ON、Low・Medium・High | 応答usage | ソフト |
 | GPT-OSS 20B | OpenAI | 常時ON、Low・Medium・High | 応答usage | ソフト |
 | GPT-OSS 120B | OpenAI | 常時ON、Low・Medium・High | 応答usage | ソフト |
+| GPT-5.6 Luna | OpenAI | ON/OFF、Low・Medium・High | SDK概算（Bedrock CountTokens非対応） | ソフト |
 | GLM 4.7 Flash | Z.AI | ON/OFF | 応答usage | ソフト |
 | GLM 4.7 | Z.AI | ON/OFF | 応答usage | ソフト |
+| Gemini 3.5 Flash | Google | ON/OFF、Low・Medium・High | Google countTokens | ソフト |
 
-Runtimeは未知のモデル、未対応のEffort、余分な推論設定フィールドをエラーにします。全8モデルは最大出力だけを事前予約し、入力分を応答usageで加算するソフト制限です。受け付けた1回の呼び出しで上限を超える可能性があります。
+Runtimeは未知のモデル、未対応のEffort、余分な推論設定フィールドをエラーにします。BedrockモデルはBedrock Runtime `CountTokens`、GeminiはGoogle `countTokens`を優先します。標準APIを利用できない場合はStrands SDKの概算へ切り替え、その事実を警告ログへ残します。自作トークナイザーや最大出力費用の予約は使用しません。
 
-## ユーザー単位のトークン上限
+GPT-5.6 Lunaは入力コンテキストが272,000トークン以下か、それを超えて1,000,000トークン以下かで公式単価が変わるため、事前計数結果から価格段階を選ぶ。選択した段階の上限は費用ログの`contextTierMaxInputTokens`へ保存する。
 
-Cognitoアクセストークンの`cognito:groups`にある`workmate-limit-<profileID>`から割り当てを確定します。未所属だけは既定プロファイルを使用し、複数所属・未知のプロファイルは拒否します。各LLM呼び出し前に`maxOutputTokens`をユーザー枠から原子的に予約し、完了後にBedrock usageの`inputTokens + outputTokens`で精算します。未計数の入力分だけ実績が予約を上回る場合があります。
+## アプリ単位の月額上限
 
-ウィンドウはUTCの日次、月曜開始の週次、月次です。プロファイル変更後は再ログインが必要です。
+各LLM呼び出し前に、当月実績と入力見積り費用が`monthlyBudgetUsd`以内か確認します。完了後はプロバイダーusageを`usageEventId`で冪等に加算します。推論開始前の拒否は`NO_CHARGE`、ストリーム開始後のusage欠落は`USAGE_UNAVAILABLE`として金額なしで記録し、他の呼び出しは止めません。
 
 ## 短期記憶とチャット履歴
 
@@ -98,8 +100,8 @@ AgentCore MemoryのManaged Memory Strategyを利用します。
 
 | 種別 | Namespace | 用途 |
 |---|---|---|
-| 個人の事実 | `/workmate/{actorId}/facts` | 居住地、所属など継続利用できる事実 |
-| ユーザーの好み | `/workmate/{actorId}/preferences` | 回答形式や表現などの好み |
+| 個人の事実 | `/<defaultCdkPrefix>/{actorId}/facts` | 居住地、所属など継続利用できる事実 |
+| ユーザーの好み | `/<defaultCdkPrefix>/{actorId}/preferences` | 回答形式や表現などの好み |
 
 新しい通常リクエストでは、入力文を検索語として各Namespaceから最大5件を取得します。重複を除き、合計8,000文字以内でシステムプロンプトへ追加します。取得したメモリは命令ではなく信頼できない参考データとして扱うよう、プロンプトで明示しています。
 
@@ -113,15 +115,15 @@ AgentCore MemoryのManaged Memory Strategyを利用します。
 | `current_datetime` | 現在日時とタイムゾーン変換 | 有効なIANAタイムゾーンのみ |
 | `text_statistics` | 文字、単語、行、バイト数などを集計 | 最大100,000 UTF-16コード単位、有効なlocaleのみ |
 | `ask_user` | 不足情報をユーザーへ質問 | 質問500文字、選択肢2～6件、自由入力可否を指定可能 |
-| `search_knowledge_base` | 既存Knowledge Baseの意味検索 | 検索語1～1,000文字、取得件数1～10件（既定5件） |
+| configの`toolName` | 対応する既存Knowledge Baseの意味検索 | 検索語1～1,000文字、取得件数1～10件（既定値もconfigで指定） |
 
-`search_knowledge_base`はRuntimeのAWS認証情報を使ってBedrock `Retrieve` APIを直接呼びます。結果にはKnowledge Base ID、本文、スコア、文書ID、メタデータ、出典位置を含めます。0件は正常結果として返し、AWS API失敗は成功結果へ置き換えず、Knowledge Base ID、AWSエラー名、取得できた場合はリクエストIDを含むエラーにします。
+各Knowledge Base検索ツールはRuntimeのAWS認証情報を使ってBedrock `Retrieve` APIを直接呼びます。結果にはKnowledge Base ID、本文、スコア、文書ID、メタデータ、出典位置を含めます。0件は正常結果として返し、AWS API失敗は成功結果へ置き換えず、Knowledge Base ID、AWSエラー名、取得できた場合はリクエストIDを含むエラーにします。
 
 ### Gatewayツール
 
 Runtimeは`McpClient`でAgentCore Gatewayへ接続します。ブラウザから受け取ったCognitoトークンをGatewayへ渡すため、Gateway側でも同じ認証ユーザーとして検証されます。
 
-現在のGatewayターゲットは`SupportDirectory___lookup_support_contact`です。`sales`、`support`、`billing`の問い合わせ先と営業時間をLambdaから返します。Lambda側でも入力値を検証します。
+現在コード側カタログに登録済みのGatewayターゲットは`SupportDirectory___lookup_support_contact`です。configの`GatewayTargets`で有効化し、タイムアウト、メモリ、非機密の環境変数を指定できます。`sales`、`support`、`billing`の問い合わせ先と営業時間をLambdaから返し、Lambda側でも入力値を検証します。
 
 ## Human in the loop
 
@@ -142,12 +144,12 @@ request、model、toolはCDKコンテキストから個別に無効化できま�
 
 ## 対象外・制約
 
-- BFF、独自セッションDB、RDSは使用しません。DynamoDBはLLM費用台帳にだけ使用します。
+- BFF、独自セッションDB、RDSは使用しません。DynamoDBはLLM費用台帳とモデル価格マスタに使用します。
 - プロジェクト単位のMemory分離は実装していません。
 - チャット名、ピン留め、アーカイブ、プロジェクト、フィードバックはRuntimeへ保存しません。
 - 添付ファイルの内容をRuntimeで永続保存しません。
 - Human in the loopの中断状態は永続化しません。
-- Gatewayツールの追加は自動検出ではなく、GatewayターゲットとIAMをCDKで定義する必要があります。
+- Gatewayツールの新規種類は自動検出せず、ソース、スキーマ、IAMをコード側カタログでレビューしてから`GatewayTargets`で選択します。
 
 ## 主な実装ファイル
 
@@ -158,6 +160,7 @@ request、model、toolはCDKコンテキストから個別に無効化できま�
 | `runtime/src/memory.ts` | 短期履歴と長期記憶 |
 | `runtime/src/knowledge-base.ts` | Bedrock Knowledge Base検索ツール |
 | `runtime/src/model-factory.ts` | モデルごとのBedrock設定 |
+| `runtime/src/pricing-catalog.ts` | 価格マスタの検証と実行時単価の取得 |
 | `runtime/src/stream-events.ts` | StrandsからAG-UIへのイベント変換 |
 | `runtime/src/tools.ts` | 組み込みツールと`ask_user` |
 | `runtime/src/logging.ts` | 構造化ログ |

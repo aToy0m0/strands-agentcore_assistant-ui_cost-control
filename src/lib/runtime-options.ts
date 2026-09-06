@@ -3,7 +3,7 @@ export type ReasoningEffort = "low" | "medium" | "high";
 export type RuntimeModelOption = {
   id: string;
   label: string;
-  provider: "amazon" | "anthropic" | "openai" | "zai";
+  provider: "amazon" | "anthropic" | "openai" | "zai" | "google";
   costControl: "hard" | "soft";
   reasoning: {
     control: "optional" | "always-on";

@@ -1,7 +1,10 @@
 {
   "app": "npx tsx infrastructure/app.ts",
   "context": {
-    "resourceNamePrefix": "workmate",
-    "uiName": "Workmate"
+    "defaultCdkPrefix": "Agent-Core-Runtime_Cost-control",
+    "runtimeDisplayName": "AIエージェント",
+    "knowledgeBases": "[{\"key\":\"internal-documents\",\"enabled\":true,\"region\":\"us-east-1\",\"knowledgeBaseId\":\"ABCDEFGHIJ\",\"toolName\":\"search_internal_documents\",\"description\":\"Search internal documents\",\"numberOfResults\":5}]",
+    "gatewayTargets": "[{\"key\":\"support-directory\",\"enabled\":true,\"timeoutSeconds\":5,\"memorySizeMb\":128,\"environmentVariables\":{}}]",
+    "enabledModelKeys": "[\"nova-2-lite\",\"claude-haiku-4-5\",\"claude-sonnet-4-6\",\"claude-sonnet-5\",\"gpt-oss-20b\",\"gpt-oss-120b\",\"glm-4-7-flash\",\"glm-4-7\"]"
   }
 }
