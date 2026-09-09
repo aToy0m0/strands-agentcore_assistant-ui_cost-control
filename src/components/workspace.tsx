@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
+import { useAuiState } from "@assistant-ui/react";
 import { fetchAuthSession, signOut } from "aws-amplify/auth";
 import { useTheme } from "next-themes";
-import { LogOut, Maximize2, Menu, Minimize2, Settings, UserRound } from "lucide-react";
+import { LogOut, Maximize2, Menu, Minimize2 } from "lucide-react";
 import { toast } from "sonner";
-import type { RuntimeConfig } from "@/config";
+import type { RuntimeAgent, RuntimeConfig } from "@/config";
 import { createAgentProfile } from "@/lib/agents";
 import { userViewFromIdTokenClaims } from "@/lib/current-user";
 import { isMobileSidebarOpeningSwipe, type SwipePoint } from "@/lib/mobile-sidebar-gesture";
@@ -14,13 +15,10 @@ import { ChatThread } from "./chat-thread";
 import { ConversationSidebar, type Project, type UserView } from "./conversation-sidebar";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "./ui/dialog";
 import { Button } from "./ui/button";
-import { Input } from "./ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { Toaster } from "./ui/sonner";
 
 export function Workspace({ config, onSignedOut }: { config: RuntimeConfig; onSignedOut: () => void }) {
-  const agent = createAgentProfile(config.ui.name);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -28,9 +26,13 @@ export function Workspace({ config, onSignedOut }: { config: RuntimeConfig; onSi
   const [currentUser, setCurrentUser] = useState<UserView>();
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string>();
+  const [selectedAgentId, setSelectedAgentId] = useState(config.defaultAgentId);
   const [appViewport, setAppViewport] = useState<AppViewport>();
   const swipeStart = useRef<SwipePoint | undefined>(undefined);
   const selectedProject = projects.find((project) => project.id === selectedProjectId);
+  const selectedAgent = config.agents.find((agent) => agent.id === selectedAgentId);
+  if (!selectedAgent) throw new Error(`未定義のRuntimeです: ${selectedAgentId}`);
+  const agent = createAgentProfile(selectedAgent.id, selectedAgent.name, selectedAgent.description);
 
   function startSidebarSwipe(event: ReactPointerEvent<HTMLDivElement>) {
     if (event.pointerType !== "touch" || mobileSidebarOpen || immersive) return;
@@ -92,7 +94,7 @@ export function Workspace({ config, onSignedOut }: { config: RuntimeConfig; onSi
   } satisfies CSSProperties : undefined;
 
   return (
-    <AgUiRuntimeProvider config={config}>
+    <AgUiRuntimeProvider key={selectedAgent.id} config={config} agent={selectedAgent}>
       <div
         className="fixed inset-x-0 top-0 flex h-dvh w-full max-w-full overflow-hidden bg-background text-foreground"
         style={viewportStyle}
@@ -115,57 +117,49 @@ export function Workspace({ config, onSignedOut }: { config: RuntimeConfig; onSi
         <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <header className={cn("relative flex h-13 shrink-0 items-center justify-between px-3 sm:px-4", !immersive && "border-b")}>
             {!immersive && <button type="button" className="grid size-9 place-items-center rounded-lg hover:bg-accent md:hidden" aria-label="会話メニューを開く" onClick={() => setMobileSidebarOpen(true)}><Menu className="size-5" /></button>}
-            {!immersive && <div className="absolute left-1/2 top-2 -translate-x-1/2 rounded-full bg-muted px-5 py-2 text-xs font-semibold">{agent.name}</div>}
+            {!immersive && <RuntimeSelector agents={config.agents} selectedAgentId={selectedAgent.id} onAgentChange={setSelectedAgentId} />}
             <button type="button" className="ml-auto grid size-9 place-items-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground" aria-label={immersive ? "全画面を終了" : "全画面表示"} onClick={() => setImmersive((value) => !value)}>{immersive ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}</button>
           </header>
           <ChatThread agent={agent} selectedProject={selectedProject} keyboardOpen={appViewport?.keyboardOpen === true} onClearSelectedProject={() => setSelectedProjectId(undefined)} />
         </main>
-        <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} config={config} onSignOut={() => void signOutOfWorkspace()} />
+        <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} onSignOut={() => void signOutOfWorkspace()} />
         <Toaster sidebarWidth={immersive ? 0 : sidebarOpen ? 238 : 48} />
       </div>
     </AgUiRuntimeProvider>
   );
 }
 
-function SettingsDialog({ open, onOpenChange, config, onSignOut }: { open: boolean; onOpenChange: (open: boolean) => void; config: RuntimeConfig; onSignOut: () => void }) {
-  const { theme, setTheme } = useTheme();
-  const agent = createAgentProfile(config.ui.name);
+function RuntimeSelector({ agents, selectedAgentId, onAgentChange }: { agents: RuntimeAgent[]; selectedAgentId: string; onAgentChange: (agentId: string) => void }) {
+  const switchBlocked = useAuiState((state) => state.thread.isRunning
+    || state.thread.messages.some((message) => message.status?.type === "requires-action"));
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="min-h-0 overflow-y-auto p-0 sm:min-h-[500px] sm:overflow-hidden">
-        <header className="border-b px-6 py-5">
-          <p className="text-[10px] font-semibold uppercase tracking-widest text-agent">Workspace</p>
-          <DialogTitle className="text-xl font-semibold">設定</DialogTitle>
-          <DialogDescription className="sr-only">外観とAgentCore接続設定</DialogDescription>
-        </header>
-        <Tabs defaultValue="general" orientation="vertical" className="grid min-h-[420px] grid-cols-[160px_1fr] max-sm:grid-cols-1">
-          <TabsList className="flex flex-col gap-1 border-r bg-muted/40 p-3 max-sm:flex-row max-sm:border-b max-sm:border-r-0">
-            <TabsTrigger value="general"><UserRound className="size-4" />一般</TabsTrigger>
-            <TabsTrigger value="connection"><Settings className="size-4" />接続</TabsTrigger>
-          </TabsList>
-          <div className="p-6">
-            <TabsContent value="general" className="space-y-6">
-              <div className="flex items-center justify-between gap-4"><span><strong className="block text-sm">外観</strong><small className="text-xs text-muted-foreground">アプリ全体のカラーテーマ</small></span><Select value={theme ?? "system"} onValueChange={setTheme}><SelectTrigger className="w-28"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="system">システム</SelectItem><SelectItem value="light">ライト</SelectItem><SelectItem value="dark">ダーク</SelectItem></SelectContent></Select></div>
-              <div className="flex items-center justify-between gap-4 border-t pt-5"><span><strong className="block text-sm">セッション</strong><small className="text-xs text-muted-foreground">Cognitoの認証セッションを終了</small></span><Button type="button" variant="outline" onClick={onSignOut}><LogOut className="size-4" />ログアウト</Button></div>
-            </TabsContent>
-            <TabsContent value="connection" className="space-y-5">
-              <div className="rounded-xl border bg-card p-4"><strong className="text-sm">{agent.name}</strong><p className="mt-1 text-xs text-muted-foreground">{agent.description}</p></div>
-              <div className="grid grid-cols-2 gap-3 max-sm:grid-cols-1">
-                <ConnectionField id="runtime-id" label="Runtime" value="Browser direct / CodeZip" />
-                <ConnectionField id="session-id" label="Session ID" value="一時的なconversation UUID" />
-                <ConnectionField id="transport" label="Transport" value="AG-UI over SSE" />
-                <ConnectionField id="auth" label="Authentication" value={config.auth.entraEnabled ? "Cognito + Entra ID" : "Cognito"} />
-                <ConnectionField id="debug" label="Browser debug" value={config.debug ? "ON" : "OFF"} />
-              </div>
-              <p className="rounded-lg bg-muted p-3 text-xs text-muted-foreground">BFFとデータベースはありません。チャット、プロジェクト、フィードバックは再読み込み後に保持されません。</p>
-            </TabsContent>
-          </div>
-        </Tabs>
-      </DialogContent>
-    </Dialog>
+    <div className="absolute left-1/2 top-1.5 w-[min(280px,55vw)] -translate-x-1/2">
+      <Select value={selectedAgentId} onValueChange={onAgentChange} disabled={switchBlocked}>
+        <SelectTrigger className="h-10 rounded-full px-4 text-xs font-semibold" aria-label="アプリを選択">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent className="rounded-[24px]">
+          {agents.map((agent) => <SelectItem className="rounded-full" key={agent.id} value={agent.id}>{agent.name}</SelectItem>)}
+        </SelectContent>
+      </Select>
+    </div>
   );
 }
 
-function ConnectionField({ id, label, value }: { id: string; label: string; value: string }) {
-  return <div className="space-y-1"><label htmlFor={id} className="text-xs text-muted-foreground">{label}</label><Input id={id} value={value} readOnly className="h-9 bg-muted/50 text-base md:text-xs" /></div>;
+function SettingsDialog({ open, onOpenChange, onSignOut }: { open: boolean; onOpenChange: (open: boolean) => void; onSignOut: () => void }) {
+  const { theme, setTheme } = useTheme();
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md p-0">
+        <header className="border-b px-6 py-5">
+          <DialogTitle className="text-xl font-semibold">設定</DialogTitle>
+          <DialogDescription className="sr-only">外観と認証セッションの設定</DialogDescription>
+        </header>
+        <div className="space-y-6 p-6">
+          <div className="flex items-center justify-between gap-4"><span><strong className="block text-sm">外観</strong><small className="text-xs text-muted-foreground">アプリ全体のカラーテーマ</small></span><Select value={theme ?? "system"} onValueChange={setTheme}><SelectTrigger className="w-28"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="system">システム</SelectItem><SelectItem value="light">ライト</SelectItem><SelectItem value="dark">ダーク</SelectItem></SelectContent></Select></div>
+          <div className="flex items-center justify-between gap-4 border-t pt-5"><span><strong className="block text-sm">セッション</strong><small className="text-xs text-muted-foreground">Cognitoの認証セッションを終了</small></span><Button type="button" variant="outline" onClick={onSignOut}><LogOut className="size-4" />ログアウト</Button></div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
 }

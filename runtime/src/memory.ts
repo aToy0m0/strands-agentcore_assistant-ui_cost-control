@@ -112,11 +112,16 @@ export class AgentCoreMemory {
       .filter((session): session is typeof session & { sessionId: string; createdAt: Date } => Boolean(session.sessionId && session.createdAt))
       .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
       .slice(0, 50);
-    return Promise.all(recentSessions.map(async (session) => ({
-      id: session.sessionId,
-      title: threadTitle(await this.loadMessages(actorId, session.sessionId)),
-      createdAt: session.createdAt.toISOString(),
-    })));
+    const threads = await Promise.all(recentSessions.map(async (session): Promise<StoredChatThread | undefined> => {
+      const messages = await this.loadMessages(actorId, session.sessionId);
+      if (messages.length === 0) return undefined;
+      return {
+        id: session.sessionId,
+        title: threadTitle(messages),
+        createdAt: session.createdAt.toISOString(),
+      };
+    }));
+    return threads.filter((thread): thread is StoredChatThread => thread !== undefined);
   }
 
   async deleteThread(actorId: string, sessionId: string): Promise<void> {

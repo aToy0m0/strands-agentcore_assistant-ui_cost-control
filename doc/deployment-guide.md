@@ -43,12 +43,13 @@ Copy-Item .\scripts\deploy-config.ap-northeast-1.example.json .\scripts\deploy-c
 `deploy-config.json`はGit管理外である。次のサンプル値を実環境へ合わせる。
 
 - Knowledge Base ID
+- 同じUIへ追加する既存RuntimeのIDまたはARN、リージョン、表示名
 - カスタムドメイン、Hosted Zone、証明書ARN
 - Gemini APIキーを格納したSecrets Manager名
 - 有効化するモデル
 - 月額上限とログ保持期間
 
-複数のKnowledge BaseとGateway Lambdaターゲットは、それぞれ`knowledgeBases`と`gatewayTargets`の配列へ追加する。Cognito提供ドメインはCloudFormation Stack IDから安定生成されるため、configでは指定しない。
+複数のKnowledge BaseとGateway Lambdaターゲットは、それぞれ`knowledgeBases`と`gatewayTargets`の配列へ追加する。複数の既存RuntimeをUIから切り替える場合は、各Runtime IDとリージョンを`additionalRuntimes`へ追加する。同じAWSアカウントなら`accountId`を省略できる。このStack自身のRuntimeは`primary`として自動登録される。Cognito提供ドメインはCloudFormation Stack IDから安定生成されるため、configでは指定しない。
 
 独自ドメインを使う場合の証明書確認、DNS検証、切り戻しは[カスタムドメインのデプロイ手順](./custom-domain-deployment.md)を参照する。
 
@@ -342,12 +343,12 @@ Disconnect-MgGraph
 
 ## デプロイ後の確認
 
-CloudFormation OutputsからアプリURL、Runtime ARN、Cognito User Pool、費用台帳、価格表Bucket、CloudWatch Dashboard名を確認する。`priceVerificationEnabled=true`なら価格照合Lambda名も出力される。
+CloudFormation OutputsからアプリURL、Runtime ARN、Cognito User Pool、費用台帳、価格表Bucketを確認する。`costDashboardEnabled=true`ならCloudWatch Dashboard名、`priceVerificationEnabled=true`なら価格照合Lambda名も出力される。
 
 1. configで許可した認証方式でログインする。
 2. 有効化したBedrockモデルとGeminiで応答を確認する。
 3. 各Knowledge BaseとGateway Lambdaツールを呼び分ける。
-4. CloudWatch Dashboardで費用とトークン数を確認する。
+4. `costDashboardEnabled=true`の場合はCloudWatch Dashboardを確認する。現在の費用実績はDynamoDB費用台帳を正とする。
 5. Runtime Logsで`model.cost.recorded`、価格表Version ID、適用単価を確認する。
 
 ### ブラウザデバッグを使う

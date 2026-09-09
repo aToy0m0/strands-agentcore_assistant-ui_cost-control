@@ -233,7 +233,7 @@ describe("AgentCoreCostControlStack", () => {
   });
 
   it("モデル費用とトークン数の専用CloudWatch Dashboardを作る", () => {
-    const value = template();
+    const value = template({ costDashboardEnabled: true });
     value.hasResourceProperties("AWS::Logs::MetricFilter", Match.objectLike({
       MetricTransformations: [Match.objectLike({ MetricName: "SettledModelCostUsd", MetricValue: "$.actualUsd" })],
     }));
@@ -243,6 +243,19 @@ describe("AgentCoreCostControlStack", () => {
     value.hasResourceProperties("AWS::CloudWatch::Dashboard", Match.objectLike({
       DashboardName: "agent-core-runtime-cost-control-model-cost",
     }));
+  });
+
+  it("費用Dashboardを無効にした環境ではDashboardと専用Metric Filterを作らない", () => {
+    const value = template({ costDashboardEnabled: false });
+    value.resourceCountIs("AWS::CloudWatch::Dashboard", 0);
+    const metricFilters = JSON.stringify(value.findResources("AWS::Logs::MetricFilter"));
+    expect(metricFilters).not.toContain("SettledModelCostUsd");
+    expect(metricFilters).not.toContain("SettledModelTokens");
+    expect(value.toJSON().Outputs?.CostDashboardName).toBeUndefined();
+  });
+
+  it("費用Dashboard設定のboolean以外を拒否する", () => {
+    expect(() => template({ costDashboardEnabled: "yes" })).toThrow("costDashboardEnabled must be true or false");
   });
 
   it("旧ユーザー上限グループを再生成しない", () => {
@@ -376,10 +389,68 @@ describe("AgentCoreCostControlStack", () => {
     value.resourceCountIs("AWS::BedrockAgentCore::GatewayTarget", 1);
   });
 
+  it("Knowledge Base Gateway Lambdaへ設定・metadata検索権限・保持期間を適用する", () => {
+    const value = template({
+      logRetentionDays: 14,
+      gatewayTargets: JSON.stringify([{
+        key: "knowledge-base-search",
+        enabled: true,
+        timeoutSeconds: 15,
+        memorySizeMb: 256,
+        environmentVariables: {},
+      }]),
+    });
+    value.hasResourceProperties("AWS::Lambda::Function", Match.objectLike({
+      FunctionName: "agent-core-runtime-cost-control-knowledge-base-search-tool",
+      Timeout: 15,
+      MemorySize: 256,
+      Environment: { Variables: Match.objectLike({ KNOWLEDGE_BASES_JSON: Match.stringLikeRegexp("internal-documents") }) },
+    }));
+    value.hasResourceProperties("AWS::Logs::LogGroup", Match.objectLike({
+      LogGroupName: "/agent-core-runtime-cost-control/tools/knowledge-base-search",
+      RetentionInDays: 14,
+    }));
+    const policies = value.findResources("AWS::IAM::Policy");
+    const statements = Object.values(policies).flatMap((policy) => policy.Properties.PolicyDocument.Statement);
+    expect(statements.some((statement) => statement.Action === "bedrock:Retrieve"
+      && JSON.stringify(statement.Resource).includes("knowledge-base/ABCDEFGHIJ"))).toBe(true);
+    value.resourceCountIs("AWS::BedrockAgentCore::GatewayTarget", 1);
+  });
+
+  it("Knowledge Base Gateway Lambdaの管理用環境変数を上書きさせない", () => {
+    expect(() => template({ gatewayTargets: JSON.stringify([{
+      key: "knowledge-base-search",
+      enabled: true,
+      timeoutSeconds: 15,
+      memorySizeMb: 256,
+      environmentVariables: { KNOWLEDGE_BASES_JSON: "[]" },
+    }]) })).toThrow("must not override KNOWLEDGE_BASES_JSON");
+  });
+
   it("Gateway targetの未知キーを拒否する", () => {
     expect(() => template({ gatewayTargets: JSON.stringify([{
       key: "unknown-tool", enabled: true, timeoutSeconds: 5, memorySizeMb: 128, environmentVariables: {},
     }]) })).toThrow("unknown catalog key");
+  });
+
+  it("複数の外部Runtime IDを追加設定できる", () => {
+    expect(() => template({ additionalRuntimes: JSON.stringify([
+      {
+        id: "document-agent",
+        name: "Document agent",
+        description: "US runtime",
+        runtimeId: "document_agent-AbCdEf1234",
+        region: "us-east-1",
+      },
+      {
+        id: "workflow-agent",
+        name: "Workflow agent",
+        description: "Tokyo runtime",
+        runtimeId: "workflow_agent-ZyXwVu9876",
+        region: "ap-northeast-1",
+        accountId: "210987654321",
+      },
+    ]) })).not.toThrow();
   });
 
   it("Entraオプション有効時だけOIDC IdPを追加する", () => {

@@ -17,6 +17,7 @@ strands-agentcore_assistant-ui_cost-control/
 │  ├─ scripts/                      Runtimeのビルド、ZIP作成、単体デプロイを行うスクリプト
 │  └─ dist/                         Runtimeのビルドで生成されるJavaScript
 ├─ <strong><u>gateway-tool/                     AgentCore Gateway経由で実行する問い合わせ先検索Lambda</u></strong>
+├─ <strong><u>gateway-knowledge-base-tool/      AgentCore Gateway経由でKnowledge Baseを検索するLambda</u></strong>
 ├─ <strong><u>pricing-verifier/                 公式AWS Price Listと価格マスタを日次照合するLambda</u></strong>
 ├─ <strong><u>infrastructure/                   CloudFront、Cognito、AgentCoreなどを作成するAWS CDK定義</u></strong>
 ├─ <strong><u>shared/                           ログイン方式、モデル、価格表の共通定義</u></strong>
@@ -47,6 +48,7 @@ strands-agentcore_assistant-ui_cost-control/
 | `runtime/src/` | AgentCore Runtimeのアプリケーション | AG-UI SSE、Bedrock・Gemini推論、S3価格表、費用台帳、チャット履歴、長期記憶、Gatewayツール |
 | `runtime/integration/` | Runtimeの外部境界を含む検証 | invocations入力やバリデーションの結合テスト |
 | `gateway-tool/` | AgentCore GatewayのLambdaターゲット | 問い合わせ先検索ツールとNode.js標準テスト |
+| `gateway-knowledge-base-tool/` | AgentCore GatewayのLambdaターゲット | 複数Knowledge Base検索、metadataフィルター、Node.js標準テスト |
 | `infrastructure/` | AWSリソースの唯一の定義 | CloudFront、S3、Cognito、Runtime、Memory、Gateway、Lambda、IAM、ログ |
 | `shared/` | 複数レイヤーで一致させる定義 | ログイン方式、モデルカタログ、S3価格カタログ初期値 |
 | `scripts/` | デプロイと構築後の管理作業 | JSON configによるCDKデプロイ、Cognitoユーザー、費用状況の確認、Entra操作 |
@@ -83,6 +85,7 @@ strands-agentcore_assistant-ui_cost-control/
 | パス | 責務 | 代表ファイル |
 |---|---|---|
 | `gateway-tool/` | GatewayのLambdaターゲットとそのテストを置く | `index.mjs`、`index.node-test.mjs` |
+| `gateway-knowledge-base-tool/` | Knowledge Base検索用Gateway Lambdaとそのテストを置く | `index.mjs`、`index.node-test.mjs` |
 | `infrastructure/` | CDKアプリを起動し、全AWSリソースを定義する | `app.ts`、`stack.ts` |
 | `shared/` | UI、Runtime、CDKで同じ値を使う定義を一元化する | `login-methods.ts`、`model-catalog.ts`、`initial-model-pricing.ts` |
 | `pricing-verifier/` | 公式価格の自動照合Lambdaと単体テスト | `index.py`、`test_index.py` |
@@ -137,7 +140,7 @@ infrastructure/stack.ts ── CDK deploy
   ├─ Runtime ZIPを専用S3へ配置してAgentCore Runtimeを更新
   ├─ DynamoDB費用台帳とVersioning付きS3価格表を作成
   ├─ オプション有効時だけCloudFront独自ドメインとRoute 53 Alias Aを設定
-  └─ Gateway Lambdaをgateway-tool/からパッケージ
+  └─ Gateway Lambdaを各gateway-*-tool/からパッケージ
 ```
 
 `public/runtime-config.json`はローカル開発用となる。本番ではCDKがUser Pool ID、App Client ID、Cognitoドメイン、Runtime ARNを含む`runtime-config.json`を生成し、`dist/`と一緒にWeb用S3へ配置する。
@@ -149,7 +152,7 @@ infrastructure/stack.ts ── CDK deploy
 | UI・共有ロジック・CDK | `test/` | `npm run test:unit` |
 | Runtime | `runtime/src/*.test.ts` | `npm run runtime:test` |
 | Runtime結合テスト | `runtime/integration/` | Runtime側の専用テスト設定を使用 |
-| Gateway Lambda | `gateway-tool/index.node-test.mjs` | `npm run gateway:test` |
+| Gateway Lambda | `gateway-tool/index.node-test.mjs`、`gateway-knowledge-base-tool/index.node-test.mjs` | `npm run gateway:test` |
 | 全体 | 上記すべてとbuild・lint・synth | `npm run verify` |
 
 実装とテストは同じ責務単位で対応させる。IAMやAWSリソースを変更した場合は、`test/infrastructure.test.ts`で生成されるCloudFormationテンプレートも検証する。
@@ -166,7 +169,7 @@ infrastructure/stack.ts ── CDK deploy
 | ログイン方式 | `shared/login-methods.ts`、`src/config.ts`、`infrastructure/stack.ts` |
 | チャット履歴・長期記憶 | `runtime/src/history.ts`、`runtime/src/memory.ts` |
 | プロンプトやモデル実行 | `runtime/src/system-prompt.ts`、`runtime/src/model-factory.ts` |
-| Gateway経由のツール利用 | `runtime/src/tools.ts`、`gateway-tool/`、`infrastructure/stack.ts` |
+| Gateway経由のツール利用 | `runtime/src/tools.ts`、`gateway-tool/`、`gateway-knowledge-base-tool/`、`infrastructure/stack.ts` |
 | AWSリソース、IAM、ログ保持 | `infrastructure/stack.ts` |
 | CognitoユーザーやEntra設定の運用 | `scripts/` |
 | デプロイ方法 | `doc/deployment-guide.md` |

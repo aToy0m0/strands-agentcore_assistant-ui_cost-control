@@ -5,12 +5,12 @@ export type AgentProfile = {
   badge: string;
 };
 
-export function createAgentProfile(name: string): AgentProfile {
+export function createAgentProfile(id: string, name: string, description: string): AgentProfile {
   const badge = Array.from(name).filter((character) => !/\s/u.test(character)).slice(0, 2).join("").toLocaleUpperCase();
   return {
-    id: "agent",
+    id,
     name,
-    description: "AgentCore Runtime上で動作する単一エージェント",
+    description,
     badge,
   };
 }

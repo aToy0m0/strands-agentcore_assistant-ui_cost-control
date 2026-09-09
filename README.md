@@ -7,10 +7,11 @@ Amazon BedrockとGoogle Geminiを同じチャットUIから利用し、アプリ
 - Amazon Cognito認証と任意のMicrosoft Entra ID OIDC連携
 - AgentCore Runtimeとブラウザ間のAG-UIストリーミング
 - AgentCore Memoryによる会話履歴と利用者単位の長期記憶
-- 複数のBedrock Knowledge Base検索ツール
-- AgentCore Gateway経由の複数Lambdaターゲット
+- 複数のAgentCore Runtimeをヘッダーから切り替えるUI
+- 複数のBedrock Knowledge Base検索ツール。Gateway Lambda経由を優先し、Runtime直接検索も予備として保持
+- AgentCore Gateway経由の複数Lambdaターゲットとmetadata JSONによるKnowledge Base絞り込み
 - Amazon BedrockとGoogle Geminiを共通UIから選択するモデルカタログ
-- CloudWatch Dashboardによるモデル費用とトークン数の可視化
+- 任意で作成できるCloudWatch Dashboardによるモデル費用とトークン数の可視化
 
 ## 費用制御
 
@@ -52,8 +53,10 @@ Cognitoの自己サインアップは無効です。初回利用者は[デプロ
 - `modelIds`: モデルキーごとの実呼び出しID。US／東京サンプルにリージョン別の推奨IDを収録
 - `knowledgeBases`: 利用可能な複数Knowledge Base
 - `gatewayTargets`: コード側カタログから有効化する複数Lambdaターゲット
+- `additionalRuntimes`: UIのアプリ選択へ追加する複数の既存AgentCore Runtime。Runtime IDまたはARNを指定
 - `logRetentionDays`: CloudWatch Logs保持日数。開発は短期、本番は180日など環境別に指定
 - `priceVerificationEnabled`: 軽量な価格照合Lambda、メトリクス、Alarmの有効化
+- `costDashboardEnabled`: 費用Dashboardと専用Metric Filterの有効化。現行サンプルは`false`
 
 全項目は[デプロイ設定一覧](doc/deployment-context-options.md)、運用は[デプロイ手順](doc/deployment-guide.md)を参照してください。
 
@@ -75,7 +78,7 @@ npm run deploy:test
 - `pricing-verifier/`: 警告専用の定期価格照合
 - `scripts/deploy.mjs`: JSON configの検証と`cdkdep`固定デプロイ
 
-CloudWatchには費用・トークン数の専用Dashboardを作成します。ログ本文の出力可否は用途別にconfigで制御できます。
+CloudWatchの費用・トークン数Dashboardは`costDashboardEnabled`で作成を選択できます。現行サンプルでは無効です。ログ本文の出力可否は用途別にconfigで制御できます。
 
 ## ドキュメント
 

@@ -14,19 +14,21 @@ const runtimeConfig = {
     entraProviderName: null,
     loginMethods: "cognito",
   },
-  agent: {
-    runtimeArn: "arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/example",
+  defaultAgentId: "primary",
+  agents: [{
+    id: "primary",
+    name: "Main agent",
+    description: "Primary runtime",
+    runtimeArn: "arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/example-AbCdEf1234",
     qualifier: "DEFAULT",
-  },
+  }],
   features: { enabledModelKeys: ["nova-2-lite"] },
 };
 
 describe("runtimeInvocationUrl", () => {
   it("Runtime ARNをURLエンコードして直接呼び出しURLを作る", () => {
-    const config = {
-      agent: { runtimeArn: "arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/example", qualifier: "DEFAULT" },
-    } as RuntimeConfig;
-    expect(runtimeInvocationUrl(config)).toBe("https://bedrock-agentcore.us-east-1.amazonaws.com/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-east-1%3A123456789012%3Aruntime%2Fexample/invocations?qualifier=DEFAULT");
+    const agent = runtimeConfig.agents[0] as RuntimeConfig["agents"][number];
+    expect(runtimeInvocationUrl(agent)).toBe("https://bedrock-agentcore.us-east-1.amazonaws.com/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-east-1%3A123456789012%3Aruntime%2Fexample-AbCdEf1234/invocations?qualifier=DEFAULT");
   });
 });
 
@@ -46,6 +48,38 @@ describe("parseRuntimeConfig", () => {
   it("UI名を必須とする", () => {
     expect(parseRuntimeConfig(runtimeConfig).ui.name).toBe("AIエージェント");
     expect(() => parseRuntimeConfig({ ...runtimeConfig, ui: { name: "" } })).toThrow("ui.name is required");
+  });
+
+  it("複数Runtimeと既定Runtimeを検証する", () => {
+    const additional = {
+      id: "secondary",
+      name: "Secondary",
+      description: "Secondary runtime",
+      runtimeId: "secondary-ZyXwVu9876",
+      region: "ap-northeast-1",
+      accountId: "123456789012",
+      qualifier: "DEFAULT",
+    };
+    expect(parseRuntimeConfig({ ...runtimeConfig, agents: [...runtimeConfig.agents, additional] }).agents).toHaveLength(2);
+    expect(() => parseRuntimeConfig({ ...runtimeConfig, defaultAgentId: "missing" })).toThrow("defaultAgentId");
+    expect(() => parseRuntimeConfig({ ...runtimeConfig, agents: [...runtimeConfig.agents, { ...additional, id: "primary" }] })).toThrow("unique IDs");
+  });
+
+  it("Runtime IDとaccountIdを使う直接呼び出しURLを作る", () => {
+    const agent = parseRuntimeConfig({
+      ...runtimeConfig,
+      defaultAgentId: "secondary",
+      agents: [{
+        id: "secondary",
+        name: "Secondary",
+        description: "Secondary runtime",
+        runtimeId: "secondary-ZyXwVu9876",
+        region: "ap-northeast-1",
+        accountId: "123456789012",
+        qualifier: "DEFAULT",
+      }],
+    }).agents[0];
+    expect(runtimeInvocationUrl(agent)).toBe("https://bedrock-agentcore.ap-northeast-1.amazonaws.com/runtimes/secondary-ZyXwVu9876/invocations?accountId=123456789012&qualifier=DEFAULT");
   });
 
   it("有効モデルキーを非空配列で必須にする", () => {

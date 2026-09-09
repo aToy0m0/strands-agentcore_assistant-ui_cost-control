@@ -12,7 +12,7 @@ import {
 } from "@assistant-ui/react";
 import { useAgUiRuntime, type UseAgUiThreadListAdapter } from "@assistant-ui/react-ag-ui";
 import { fetchAuthSession } from "aws-amplify/auth";
-import { runtimeInvocationUrl, type RuntimeConfig } from "@/config";
+import { runtimeInvocationUrl, type RuntimeAgent, type RuntimeConfig } from "@/config";
 import { DEFAULT_RUNTIME_OPTIONS } from "@/lib/default-runtime-options";
 import { debugError, debugLog, isDebugEnabled, parsedRequestBody } from "@/lib/debug";
 import { readMemoryResponse } from "@/lib/memory-response";
@@ -130,9 +130,9 @@ function toThreadMessage(message: MemoryMessage): ThreadMessage {
   };
 }
 
-async function memoryRequest(config: RuntimeConfig, requestSessionId: string, body: Record<string, string>): Promise<unknown> {
+async function memoryRequest(agent: RuntimeAgent, requestSessionId: string, body: Record<string, string>): Promise<unknown> {
   debugLog("history.request", { requestSessionId, body });
-  const response = await authenticatedFetch(requestSessionId)(runtimeInvocationUrl(config), {
+  const response = await authenticatedFetch(requestSessionId)(runtimeInvocationUrl(agent), {
     method: "POST",
     headers: { Accept: "application/json", "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -140,7 +140,7 @@ async function memoryRequest(config: RuntimeConfig, requestSessionId: string, bo
   return readMemoryResponse(response);
 }
 
-export function AgUiRuntimeProvider({ config, children }: { config: RuntimeConfig; children: ReactNode }) {
+export function AgUiRuntimeProvider({ config, agent, children }: { config: RuntimeConfig; agent: RuntimeAgent; children: ReactNode }) {
   const [threadId, setThreadId] = useState<string>(() => crypto.randomUUID());
   const [items, setItems] = useState<Array<RegularThread | ArchivedThread>>([]);
   const [isLoadingThreads, setIsLoadingThreads] = useState(true);
@@ -164,7 +164,7 @@ export function AgUiRuntimeProvider({ config, children }: { config: RuntimeConfi
 
   useEffect(() => {
     let active = true;
-    void memoryRequest(config, historyRequestSessionId.current, { operation: "memory.listThreads" })
+    void memoryRequest(agent, historyRequestSessionId.current, { operation: "memory.listThreads" })
       .then((payload) => {
         if (!active) return;
         setItems(parseThreads(payload).map((thread) => ({
@@ -183,7 +183,7 @@ export function AgUiRuntimeProvider({ config, children }: { config: RuntimeConfi
         if (active) setIsLoadingThreads(false);
       });
     return () => { active = false; };
-  }, [config]);
+  }, [agent]);
 
   const threadList = useMemo<UseAgUiThreadListAdapter>(() => ({
     threadId,
@@ -192,7 +192,7 @@ export function AgUiRuntimeProvider({ config, children }: { config: RuntimeConfi
     archivedThreads: archived,
     onSwitchToNewThread: async () => { setThreadId(crypto.randomUUID()); },
     onSwitchToThread: async (id) => {
-      const payload = await memoryRequest(config, historyRequestSessionId.current, { operation: "memory.loadThread", sessionId: id });
+      const payload = await memoryRequest(agent, historyRequestSessionId.current, { operation: "memory.loadThread", sessionId: id });
       const messages = parseMessages(payload).map(toThreadMessage);
       setThreadId(id);
       return { messages };
@@ -202,19 +202,19 @@ export function AgUiRuntimeProvider({ config, children }: { config: RuntimeConfi
     onArchive: async (id) => replace(id, { status: "archived" }),
     onUnarchive: async (id) => replace(id, { status: "regular" }),
     onDelete: async (id) => {
-      await memoryRequest(config, historyRequestSessionId.current, { operation: "memory.deleteThread", sessionId: id });
+      await memoryRequest(agent, historyRequestSessionId.current, { operation: "memory.deleteThread", sessionId: id });
       setItems((current) => current.filter((item) => item.id !== id));
     },
-  }), [archived, config, isLoadingThreads, regular, replace, threadId]);
+  }), [agent, archived, isLoadingThreads, regular, replace, threadId]);
 
-  const agent = useMemo(() => new RunErrorAwareHttpAgent({
-    url: runtimeInvocationUrl(config),
-    agentId: "agent",
+  const httpAgent = useMemo(() => new RunErrorAwareHttpAgent({
+    url: runtimeInvocationUrl(agent),
+    agentId: agent.id,
     threadId,
     headers: { Accept: "text/event-stream" },
     fetch: authenticatedFetch(threadId),
     debug: config.debug ? { events: true, lifecycle: true, verbose: true } : false,
-  }), [config, threadId]);
+  }), [agent, config.debug, threadId]);
   const logger = useMemo(() => config.debug ? {
     debug: (...values: unknown[]) => debugLog("assistant-ui", values),
     error: (...values: unknown[]) => debugError("assistant-ui", values),
@@ -232,7 +232,7 @@ export function AgUiRuntimeProvider({ config, children }: { config: RuntimeConfi
     };
   }, [config.features.enabledModelKeys]);
   const runtime = useAgUiRuntime({
-    agent,
+    agent: httpAgent,
     logger,
     showThinking: true,
     onError: (cause) => {

@@ -24,8 +24,16 @@
       "timeoutSeconds": 5,
       "memorySizeMb": 128,
       "environmentVariables": {}
+    },
+    {
+      "key": "knowledge-base-search",
+      "enabled": true,
+      "timeoutSeconds": 15,
+      "memorySizeMb": 256,
+      "environmentVariables": {}
     }
   ],
+  "additionalRuntimes": [],
   "geminiEnabled": true,
   "geminiApiKeySecretName": "sample/gemini-api-key",
   "enabledModelKeys": ["nova-2-lite", "claude-haiku-4-5", "gemini-3-5-flash"],
@@ -48,5 +56,6 @@
   "runtimeLogModel": "off",
   "runtimeLogTool": "on",
   "monthlyBudgetUsd": "60",
-  "priceVerificationEnabled": false
+  "priceVerificationEnabled": false,
+  "costDashboardEnabled": false
 }

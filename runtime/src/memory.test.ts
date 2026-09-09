@@ -77,6 +77,17 @@ describe("AgentCoreMemory", () => {
     }]);
   });
 
+  it("削除後に残る空セッションを履歴一覧へ表示しない", async () => {
+    const send = vi.fn(async (command: ListSessionsCommand | ListEventsCommand) => {
+      if (command instanceof ListSessionsCommand) {
+        return { sessionSummaries: [{ sessionId: "session-123456789012345678901234567890", actorId: "actor-1", createdAt: new Date("2026-01-01T00:00:00Z") }] };
+      }
+      return { events: [] };
+    });
+
+    await expect(memoryWith(send).listThreads("actor-1")).resolves.toEqual([]);
+  });
+
   it("treats an actor without any events as an empty thread list", async () => {
     const send = vi.fn().mockRejectedValue(new ResourceNotFoundException({
       $metadata: {},

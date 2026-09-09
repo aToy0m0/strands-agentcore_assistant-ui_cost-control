@@ -13,10 +13,16 @@
     "entraProviderName": null,
     "loginMethods": "cognito"
   },
-  "agent": {
-    "runtimeArn": "",
-    "qualifier": "DEFAULT"
-  },
+  "defaultAgentId": "primary",
+  "agents": [
+    {
+      "id": "primary",
+      "name": "AIエージェント",
+      "description": "このスタックで管理するRuntime",
+      "runtimeArn": "arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/sample-AbCdEf1234",
+      "qualifier": "DEFAULT"
+    }
+  ],
   "features": {
     "enabledModelKeys": ["nova-2-lite", "claude-haiku-4-5"]
   }

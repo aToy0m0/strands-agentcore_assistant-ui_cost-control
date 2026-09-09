@@ -6,6 +6,7 @@ import {
   unstable_memoizeMarkdownComponents as memoizeMarkdownComponents,
   useIsMarkdownCodeBlock,
 } from "@assistant-ui/react-markdown";
+import { TextMessagePartProvider } from "@assistant-ui/react";
 import { Check, Copy } from "lucide-react";
 import { type FC, memo, useState } from "react";
 import remarkGfm from "remark-gfm";
@@ -14,19 +15,33 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { cn } from "@/lib/utils";
 import { remarkHtmlLineBreak } from "@/lib/remark-html-line-break";
 
-const MarkdownTextImpl = () => (
+type MarkdownTextProps = {
+  className?: string;
+  defer?: boolean;
+  smooth?: boolean;
+};
+
+const MarkdownTextImpl = ({ className, defer = true, smooth = true }: MarkdownTextProps) => (
   <MarkdownTextPrimitive
     remarkPlugins={[remarkGfm, remarkHtmlLineBreak]}
-    className="aui-md min-w-0 [overflow-wrap:anywhere]"
+    className={cn("aui-md min-w-0 [overflow-wrap:anywhere]", className)}
     components={defaultComponents}
     componentsByLanguage={{
       mermaid: { SyntaxHighlighter: MermaidDiagram },
     }}
-    defer
+    defer={defer}
+    smooth={smooth}
   />
 );
 
 export const MarkdownText = memo(MarkdownTextImpl);
+
+/** 任意の文字列を、会話メッセージと同じMarkdownレンダーで表示する。 */
+export const MarkdownPreview = memo(({ text, className }: { text: string; className?: string }) => (
+  <TextMessagePartProvider text={text}>
+    <MarkdownText className={className} smooth={false} />
+  </TextMessagePartProvider>
+));
 
 const CodeHeader: FC<CodeHeaderProps> = ({ language, code }) => {
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");

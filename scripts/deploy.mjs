@@ -9,10 +9,10 @@ const projectRoot = resolve(scriptsDirectory, "..");
 const allowedKeys = new Set([
   "profile", "region", "defaultCdkPrefix", "runtimeDisplayName", "webDebugMode",
   "customDomainEnabled", "customDomainName", "hostedZoneId", "hostedZoneName", "certificateArn",
-  "allowCrossRegionKnowledgeBases", "knowledgeBases", "gatewayTargets", "geminiEnabled", "geminiApiKeySecretName",
+  "allowCrossRegionKnowledgeBases", "knowledgeBases", "gatewayTargets", "additionalRuntimes", "geminiEnabled", "geminiApiKeySecretName",
   "enabledModelKeys", "modelIds", "entraEnabled", "entraTenantId", "entraClientId", "entraClientSecretName", "loginMethods",
   "logRetentionDays", "runtimeLogRequest", "runtimeLogModel", "runtimeLogTool", "monthlyBudgetUsd",
-  "priceVerificationEnabled",
+  "priceVerificationEnabled", "costDashboardEnabled",
 ]);
 
 const contextKeys = [
@@ -20,7 +20,7 @@ const contextKeys = [
   "customDomainName", "hostedZoneId", "hostedZoneName", "certificateArn", "allowCrossRegionKnowledgeBases",
   "geminiEnabled", "geminiApiKeySecretName", "entraEnabled", "entraTenantId", "entraClientId", "entraClientSecretName",
   "loginMethods", "logRetentionDays", "runtimeLogRequest", "runtimeLogModel", "runtimeLogTool", "monthlyBudgetUsd",
-  "priceVerificationEnabled",
+  "priceVerificationEnabled", "costDashboardEnabled",
 ];
 
 function object(value, name) {
@@ -54,8 +54,8 @@ export function validateDeployConfig(value) {
   if (!/^[A-Za-z0-9 _-]{1,128}$/u.test(config.defaultCdkPrefix.trim())) throw new Error("defaultCdkPrefix is invalid");
   if (!/^(on|off)$/u.test(config.webDebugMode)) throw new Error("webDebugMode must be on or off");
   if (!/^\d+(\.\d{1,9})?$/u.test(config.monthlyBudgetUsd) || Number(config.monthlyBudgetUsd) <= 0) throw new Error("monthlyBudgetUsd must be greater than zero with at most 9 decimal places");
-  for (const name of ["customDomainEnabled", "allowCrossRegionKnowledgeBases", "geminiEnabled", "entraEnabled", "priceVerificationEnabled"]) requiredBoolean(config, name);
-  for (const name of ["knowledgeBases", "gatewayTargets", "enabledModelKeys"]) requiredArray(config, name);
+  for (const name of ["customDomainEnabled", "allowCrossRegionKnowledgeBases", "geminiEnabled", "entraEnabled", "priceVerificationEnabled", "costDashboardEnabled"]) requiredBoolean(config, name);
+  for (const name of ["knowledgeBases", "gatewayTargets", "additionalRuntimes", "enabledModelKeys"]) requiredArray(config, name);
   const modelIds = object(config.modelIds, "modelIds");
   for (const [key, value] of Object.entries(modelIds)) {
     if (typeof value !== "string" || !value.trim()) throw new Error(`modelIds.${key} must be a non-empty string`);
@@ -90,6 +90,7 @@ export function cdkArguments(config, mode) {
   }
   contexts.set("knowledgeBasesBase64", base64url(config.knowledgeBases));
   contexts.set("gatewayTargetsBase64", base64url(config.gatewayTargets));
+  contexts.set("additionalRuntimesBase64", base64url(config.additionalRuntimes));
   contexts.set("enabledModelKeysBase64", base64url(config.enabledModelKeys));
   contexts.set("modelIdsBase64", base64url(config.modelIds));
   const args = ["run", "--silent", mode === "diff" ? "cdk:diff" : "cdk:deploy", "--", "--profile", config.profile, "--region", config.region];

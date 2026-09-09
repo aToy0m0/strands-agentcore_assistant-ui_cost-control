@@ -14,7 +14,7 @@
     "runtime:install": "npm ci --prefix runtime",
     "runtime:build": "npm ci --prefix runtime --no-audit --no-fund && npm run package --prefix runtime",
     "runtime:test": "npm test --prefix runtime",
-    "gateway:test": "node --test gateway-tool/index.node-test.mjs",
+    "gateway:test": "node --test gateway-tool/index.node-test.mjs gateway-knowledge-base-tool/index.node-test.mjs",
     "pricing:test": "python -m unittest discover -s pricing-verifier -p test_*.py",
     "cdk:synth": "npm run build && npm run runtime:build && cdk synth",
     "cdk:diff": "npm run build && npm run runtime:build && cdk diff AgentCoreCostControlStack",

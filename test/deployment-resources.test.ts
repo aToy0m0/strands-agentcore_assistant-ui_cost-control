@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   assertKnowledgeBaseRegions,
+  parseAdditionalRuntimes,
   parseEnabledModelKeys,
   parseGatewayLambdaTargets,
   parseKnowledgeBases,
@@ -52,6 +53,56 @@ describe("deployment resource config", () => {
     expect(() => parseGatewayLambdaTargets([{
       key: "support-directory", environmentVariables: { "bad-name": "value" },
     }])).toThrow("invalid name");
+  });
+
+  it("追加Runtimeを検証してprimary IDを予約する", () => {
+    expect(parseAdditionalRuntimes([
+      {
+        id: "secondary",
+        name: "Secondary",
+        description: "Another runtime",
+        runtimeId: "secondary-ZyXwVu9876",
+        region: "ap-northeast-1",
+      },
+      {
+        id: "external",
+        name: "External",
+        description: "ARN runtime",
+        runtimeArn: "arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/external-AbCdEf1234",
+        qualifier: "LIVE",
+      },
+    ])).toEqual([
+      {
+        id: "secondary",
+        name: "Secondary",
+        description: "Another runtime",
+        runtimeId: "secondary-ZyXwVu9876",
+        region: "ap-northeast-1",
+        qualifier: "DEFAULT",
+      },
+      {
+        id: "external",
+        name: "External",
+        description: "ARN runtime",
+        runtimeArn: "arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/external-AbCdEf1234",
+        qualifier: "LIVE",
+      },
+    ]);
+    expect(() => parseAdditionalRuntimes([{
+      id: "primary",
+      name: "Primary",
+      description: "Reserved",
+      runtimeId: "primary-AbCdEf1234",
+      region: "us-east-1",
+    }])).toThrow("reserved");
+    expect(() => parseAdditionalRuntimes([{
+      id: "invalid",
+      name: "Invalid",
+      description: "Both identifiers",
+      runtimeId: "invalid-AbCdEf1234",
+      runtimeArn: "arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/invalid-AbCdEf1234",
+      region: "us-east-1",
+    }])).toThrow("exactly one");
   });
 
   it("配置環境で有効にするモデルをallowlistとして検証する", () => {

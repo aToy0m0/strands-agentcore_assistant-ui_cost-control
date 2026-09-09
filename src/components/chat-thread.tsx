@@ -17,7 +17,7 @@ import {
 } from "@assistant-ui/react";
 import { useAgUiInterrupts, useAgUiSubmitInterruptResponses } from "@assistant-ui/react-ag-ui";
 import {
-  ArrowDown, ArrowUp, AudioWaveform, ChevronDown, ChevronLeft, ChevronRight,
+  ArrowDown, ArrowUp, AudioWaveform, ChevronDown, ChevronLeft, ChevronRight, Eye,
   Camera, Copy, File as FileIcon, FileUp, FolderKanban, Image as ImageIcon, Pencil, Plus,
   Check, LoaderCircle, Square, ThumbsDown, ThumbsUp, X,
 } from "lucide-react";
@@ -25,7 +25,7 @@ import { toast } from "sonner";
 import type { AgentProfile } from "@/lib/agents";
 import type { Project } from "./conversation-sidebar";
 import { cn } from "@/lib/utils";
-import { MarkdownText } from "./markdown-text";
+import { MarkdownPreview, MarkdownText } from "./markdown-text";
 import { Button } from "./ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "./ui/dialog";
@@ -109,6 +109,8 @@ function Composer({ placeholder, elevated = false, compact = false }: { placehol
   const photoInputRef = useRef<HTMLInputElement>(null);
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
   const [cameraOpen, setCameraOpen] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
+  const composerText = useAuiState((state) => state.composer.text);
 
   async function addFiles(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.currentTarget.files ?? []);
@@ -153,6 +155,7 @@ function Composer({ placeholder, elevated = false, compact = false }: { placehol
   }
 
   function closeMobileKeyboardAfterSubmit() {
+    setPreviewing(false);
     if (!window.matchMedia("(max-width: 767px)").matches) return;
     requestAnimationFrame(() => inputRef.current?.blur());
   }
@@ -165,7 +168,13 @@ function Composer({ placeholder, elevated = false, compact = false }: { placehol
           <div className="px-2 pt-2"><ComposerPrimitive.Attachments>{() => <AttachmentCard removable />}</ComposerPrimitive.Attachments></div>
         </AuiIf>
         <div className="flex min-h-12 w-full items-end gap-1">
-          <ComposerPrimitive.Input ref={inputRef} rows={1} placeholder={placeholder} className="max-h-36 min-h-12 min-w-0 flex-1 resize-none bg-transparent px-3 py-3 text-base outline-none placeholder:text-muted-foreground md:text-[15px]" aria-label="メッセージ" />
+          {previewing ? (
+            <div className="max-h-60 min-h-12 min-w-0 flex-1 overflow-y-auto px-3 py-3 text-left text-[15px]" aria-label="Markdownプレビュー">
+              <MarkdownPreview text={composerText} className="[&>p:first-child]:mt-0 [&>p:last-child]:mb-0" />
+            </div>
+          ) : (
+            <ComposerPrimitive.Input ref={inputRef} rows={1} placeholder={placeholder} className="max-h-36 min-h-12 min-w-0 flex-1 resize-none bg-transparent px-3 py-3 text-base outline-none placeholder:text-muted-foreground md:text-[15px]" aria-label="メッセージ" />
+          )}
           <AuiIf condition={(state) => state.thread.isRunning}><ComposerPrimitive.Cancel className="mb-1 grid size-9 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground" aria-label="生成を停止"><Square className="size-3.5" fill="currentColor" /></ComposerPrimitive.Cancel></AuiIf>
           <AuiIf condition={(state) => !state.thread.isRunning && state.composer.dictation != null}><ComposerPrimitive.StopDictation className="mb-1 grid size-9 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground" aria-label="音声入力を停止"><Square className="size-3.5" fill="currentColor" /></ComposerPrimitive.StopDictation></AuiIf>
           <AuiIf condition={(state) => !state.thread.isRunning && state.composer.dictation == null && !state.composer.isEmpty}><ComposerPrimitive.Send className="mb-1 grid size-9 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground" aria-label="送信"><ArrowUp className="size-5" /></ComposerPrimitive.Send></AuiIf>
@@ -177,6 +186,7 @@ function Composer({ placeholder, elevated = false, compact = false }: { placehol
         {compact && <span aria-hidden="true" />}
         <div className="flex shrink-0 items-center justify-end gap-1">
           <InferenceControls />
+        {composerText.length > 0 && <button type="button" className={iconButton} aria-label={previewing ? "Markdownを編集" : "Markdownをプレビュー"} aria-pressed={previewing} onClick={() => { setPreviewing((current) => !current); if (previewing) requestAnimationFrame(() => inputRef.current?.focus()); }}>{previewing ? <Pencil className="size-4" /> : <Eye className="size-4" />}</button>}
         <Popover open={attachmentMenuOpen} onOpenChange={setAttachmentMenuOpen}>
           <PopoverTrigger asChild><button type="button" className={iconButton} aria-label="添付メニューを開く"><Plus className="size-5" /></button></PopoverTrigger>
           <PopoverContent align="start" side="top" className="w-56 p-1.5">

@@ -1,6 +1,6 @@
 # Runtime機能一覧
 
-この資料は、AgentCore CodeZip Runtimeに実装されている機能と、その責務・制約を説明します。対象は主に`runtime/src/`、`shared/`、`gateway-tool/`、`infrastructure/stack.ts`です。
+この資料は、AgentCore CodeZip Runtimeに実装されている機能と、その責務、制約を説明します。対象は主に`runtime/src/`、`shared/`、Gateway Lambda、`infrastructure/stack.ts`です。
 
 ## Runtimeの役割
 
@@ -119,13 +119,15 @@ AgentCore MemoryのManaged Memory Strategyを利用します。
 | `ask_user` | 不足情報をユーザーへ質問 | 質問500文字、選択肢2～6件、自由入力可否を指定可能 |
 | configの`toolName` | 対応する既存Knowledge Baseの意味検索 | 検索語1～1,000文字、取得件数1～10件（既定値もconfigで指定） |
 
-各Knowledge Base検索ツールはRuntimeのAWS認証情報を使ってBedrock `Retrieve` APIを直接呼びます。結果にはKnowledge Base ID、本文、スコア、文書ID、メタデータ、出典位置を含めます。0件は正常結果として返し、AWS API失敗は成功結果へ置き換えず、Knowledge Base ID、AWSエラー名、取得できた場合はリクエストIDを含むエラーにします。
+各Knowledge Base検索ツールはRuntimeのAWS認証情報を使ってBedrock `Retrieve` APIを直接呼びます。この経路はGateway Lambdaが利用できない場合の予備として残しています。結果にはKnowledge Base ID、本文、スコア、文書ID、メタデータ、出典位置を含めます。0件は正常結果として返し、AWS API失敗は成功結果へ置き換えません。
 
 ### Gatewayツール
 
 Runtimeは`McpClient`でAgentCore Gatewayへ接続します。ブラウザから受け取ったCognitoトークンをGatewayへ渡すため、Gateway側でも同じ認証ユーザーとして検証されます。
 
-現在コード側カタログに登録済みのGatewayターゲットは`SupportDirectory___lookup_support_contact`です。configの`gatewayTargets`で有効化し、タイムアウト、メモリ、非機密の環境変数を指定できます。`sales`、`support`、`billing`の問い合わせ先と営業時間をLambdaから返し、Lambda側でも入力値を検証します。
+コード側カタログには、問い合わせ先検索とKnowledge Base検索のLambdaターゲットを登録しています。configの`gatewayTargets`で有効化し、タイムアウト、メモリ、非機密の環境変数を指定できます。
+
+Knowledge Baseターゲットはconfigの複数Knowledge Baseから論理キーで検索先を選びます。`metadataKey`と`metadataValue`を指定した場合はBedrockの文字列equalsフィルターへ変換し、metadata JSONで付与した属性を絞り込みに使います。RuntimeのシステムプロンプトはGateway経由を優先し、失敗または未提供の場合だけ直接検索ツールを使い、その切替を利用者へ明示するよう指示しています。コードによる暗黙の自動フォールバックは行いません。
 
 ## Human in the loop
 
@@ -152,6 +154,7 @@ request、model、toolはCDKコンテキストから個別に無効化できま�
 - 添付ファイルの内容をRuntimeで永続保存しません。
 - Human in the loopの中断状態は永続化しません。
 - Gatewayツールの新規種類は自動検出せず、ソース、スキーマ、IAMをコード側カタログでレビューしてから`gatewayTargets`で選択します。
+- システムプロンプトはRuntimeごとの責務です。UIで追加した外部Runtimeのプロンプト、ツール、MemoryはこのStackから変更しません。
 
 ## 主な実装ファイル
 
@@ -167,4 +170,5 @@ request、model、toolはCDKコンテキストから個別に無効化できま�
 | `runtime/src/tools.ts` | 組み込みツールと`ask_user` |
 | `runtime/src/logging.ts` | 構造化ログ |
 | `gateway-tool/index.mjs` | 問い合わせ先検索Lambda |
+| `gateway-knowledge-base-tool/index.mjs` | 複数Knowledge Baseとmetadataフィルターを扱うGateway Lambda |
 | `shared/model-catalog.ts` | モデル定義と推論設定検証 |

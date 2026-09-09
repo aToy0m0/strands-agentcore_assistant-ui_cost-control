@@ -45,6 +45,7 @@ import { resolveLoginMethods, showsCognitoLogin, showsEntraLogin } from "../shar
 import { MODEL_PRICING_CATALOG } from "../shared/initial-model-pricing.js";
 import {
   assertKnowledgeBaseRegions,
+  parseAdditionalRuntimes,
   parseEnabledModelKeys,
   parseGatewayLambdaTargets,
   parseKnowledgeBases,
@@ -93,6 +94,29 @@ const gatewayToolCatalog = {
           hours: { type: SchemaDefinitionType.STRING },
         },
         required: ["department", "email", "hours"],
+      },
+    }]),
+  },
+  "knowledge-base-search": {
+    constructId: "KnowledgeBaseSearch",
+    functionNameSuffix: "knowledge-base-search-tool",
+    description: "Read-only Bedrock Knowledge Base retrieval",
+    assetDirectory: "gateway-knowledge-base-tool",
+    targetName: "KnowledgeBaseSearch",
+    targetDescription: "Searches the configured Bedrock Knowledge Bases and returns source metadata",
+    toolSchema: () => ToolSchema.fromInline([{
+      name: "search_knowledge_base_via_gateway",
+      description: "Search a configured Knowledge Base. Use knowledgeBaseKey to select the source and optional metadataKey/metadataValue for an equality filter.",
+      inputSchema: {
+        type: SchemaDefinitionType.OBJECT,
+        properties: {
+          knowledgeBaseKey: { type: SchemaDefinitionType.STRING, description: "Logical Knowledge Base key from deployment configuration." },
+          query: { type: SchemaDefinitionType.STRING, description: "Concise semantic search query." },
+          numberOfResults: { type: SchemaDefinitionType.INTEGER, description: "Number of chunks to return, from 1 to 10." },
+          metadataKey: { type: SchemaDefinitionType.STRING, description: "Optional metadata field name for an equality filter." },
+          metadataValue: { type: SchemaDefinitionType.STRING, description: "Optional string value paired with metadataKey." },
+        },
+        required: ["knowledgeBaseKey", "query"],
       },
     }]),
   },
@@ -186,6 +210,13 @@ export class AgentCoreCostControlStack extends Stack {
       throw new Error("priceVerificationEnabled must be true or false");
     }
     const priceVerificationEnabled = priceVerificationEnabledValue === true || priceVerificationEnabledValue === "true";
+    const costDashboardEnabledValue = this.node.tryGetContext("costDashboardEnabled");
+    if (costDashboardEnabledValue !== undefined && ![true, false, "true", "false"].includes(costDashboardEnabledValue)) {
+      throw new Error("costDashboardEnabled must be true or false");
+    }
+    const costDashboardEnabled = costDashboardEnabledValue === undefined
+      || costDashboardEnabledValue === true
+      || costDashboardEnabledValue === "true";
     const encodedKnowledgeBases = decodeBase64UrlContext(this.node.tryGetContext("knowledgeBasesBase64"), "knowledgeBasesBase64");
     const knowledgeBases = parseKnowledgeBases(encodedKnowledgeBases ?? this.node.tryGetContext("knowledgeBases"));
     const knowledgeBasesJson = JSON.stringify(knowledgeBases);
@@ -194,6 +225,11 @@ export class AgentCoreCostControlStack extends Stack {
     assertKnowledgeBaseRegions(knowledgeBases, this.region, allowCrossRegionKnowledgeBases);
     const encodedGatewayTargets = decodeBase64UrlContext(this.node.tryGetContext("gatewayTargetsBase64"), "gatewayTargetsBase64");
     const gatewayTargets = parseGatewayLambdaTargets(encodedGatewayTargets ?? this.node.tryGetContext("gatewayTargets"));
+    const encodedAdditionalRuntimes = decodeBase64UrlContext(this.node.tryGetContext("additionalRuntimesBase64"), "additionalRuntimesBase64");
+    const additionalRuntimes = parseAdditionalRuntimes(encodedAdditionalRuntimes ?? this.node.tryGetContext("additionalRuntimes"));
+    const additionalRuntimeAgents = additionalRuntimes.map((runtime) => "runtimeArn" in runtime
+      ? runtime
+      : { ...runtime, accountId: runtime.accountId ?? this.account });
     const encodedEnabledModelKeys = decodeBase64UrlContext(this.node.tryGetContext("enabledModelKeysBase64"), "enabledModelKeysBase64");
     const enabledModelKeys = parseEnabledModelKeys(
       encodedEnabledModelKeys ?? this.node.tryGetContext("enabledModelKeys"),
@@ -469,6 +505,9 @@ export class AgentCoreCostControlStack extends Stack {
       pricingVerificationSchedule.addTarget(new LambdaTarget(pricingVerifier, { retryAttempts: 2 }));
       pricingVerifier.node.addDependency(pricingCatalogDeployment);
     }
+    const knowledgeBaseResources = knowledgeBases
+      .filter((knowledgeBase) => knowledgeBase.enabled)
+      .map((knowledgeBase) => `arn:${this.partition}:bedrock:${knowledgeBase.region}:${this.account}:knowledge-base/${knowledgeBase.knowledgeBaseId}`);
     const gatewayRole = new Role(this, "ToolGatewayRole", {
       description: `Least-privilege execution role for the ${names.base} AgentCore Gateway`,
       assumedBy: new ServicePrincipal("bedrock-agentcore.amazonaws.com").withConditions({
@@ -492,6 +531,9 @@ export class AgentCoreCostControlStack extends Stack {
     const configuredGatewayTargets = gatewayTargets.filter((target) => target.enabled).map((target) => {
       if (!(target.key in gatewayToolCatalog)) throw new Error(`gatewayTargets references unknown catalog key '${target.key}'`);
       const catalog = gatewayToolCatalog[target.key as keyof typeof gatewayToolCatalog];
+      if (target.key === "knowledge-base-search" && "KNOWLEDGE_BASES_JSON" in target.environmentVariables) {
+        throw new Error("gatewayTargets knowledge-base-search environmentVariables must not override KNOWLEDGE_BASES_JSON");
+      }
       const isLegacySupportDirectory = target.key === "support-directory";
       const gatewayToolLogGroup = new LogGroup(this, isLegacySupportDirectory ? "GatewayToolLogs" : `${catalog.constructId}Logs`, {
         logGroupName: names.gatewayToolLogGroupName(target.key),
@@ -506,9 +548,18 @@ export class AgentCoreCostControlStack extends Stack {
         code: Code.fromAsset(path.join(root, "..", catalog.assetDirectory), { exclude: ["*.node-test.mjs"] }),
         timeout: Duration.seconds(target.timeoutSeconds),
         memorySize: target.memorySizeMb,
-        environment: target.environmentVariables,
+        environment: target.key === "knowledge-base-search"
+          ? { ...target.environmentVariables, KNOWLEDGE_BASES_JSON: knowledgeBasesJson }
+          : target.environmentVariables,
         logGroup: gatewayToolLogGroup,
       });
+      if (target.key === "knowledge-base-search" && knowledgeBaseResources.length > 0) {
+        gatewayTool.addToRolePolicy(new PolicyStatement({
+          effect: Effect.ALLOW,
+          actions: ["bedrock:Retrieve"],
+          resources: knowledgeBaseResources,
+        }));
+      }
       const gatewayTarget = toolGateway.addLambdaTarget(`${catalog.constructId}Target`, {
         gatewayTargetName: catalog.targetName,
         description: catalog.targetDescription,
@@ -566,9 +617,6 @@ export class AgentCoreCostControlStack extends Stack {
         resources: bedrockResources(bedrockModels),
       }));
     }
-    const knowledgeBaseResources = knowledgeBases
-      .filter((knowledgeBase) => knowledgeBase.enabled)
-      .map((knowledgeBase) => `arn:${this.partition}:bedrock:${knowledgeBase.region}:${this.account}:knowledge-base/${knowledgeBase.knowledgeBaseId}`);
     if (knowledgeBaseResources.length > 0) {
       runtimeRole.addToPolicy(new PolicyStatement({
         effect: Effect.ALLOW,
@@ -637,33 +685,36 @@ export class AgentCoreCostControlStack extends Stack {
       retention: logRetention,
       removalPolicy: RemovalPolicy.DESTROY,
     });
-    const settledCostFilter = new MetricFilter(this, "RecordedModelCostMetric", {
-      logGroup: runtimeLogGroup,
-      filterPattern: FilterPattern.literal('{ $.event = "model.cost.recorded" && $.actualUsd = * }'),
-      metricNamespace: names.metricNamespace,
-      metricName: "SettledModelCostUsd",
-      metricValue: "$.actualUsd",
-      defaultValue: 0,
-    });
-    const settledTokensFilter = new MetricFilter(this, "RecordedModelTokensMetric", {
-      logGroup: runtimeLogGroup,
-      filterPattern: FilterPattern.literal('{ $.event = "model.cost.recorded" && $.actualTokens = * }'),
-      metricNamespace: names.metricNamespace,
-      metricName: "SettledModelTokens",
-      metricValue: "$.actualTokens",
-      defaultValue: 0,
-    });
-    const costDashboard = new Dashboard(this, "CostDashboard", {
-      dashboardName: names.dashboardName,
-    });
-    const costMetric = settledCostFilter.metric({ statistic: "Sum", period: Duration.hours(1) });
-    const tokenMetric = settledTokensFilter.metric({ statistic: "Sum", period: Duration.hours(1) });
-    costDashboard.addWidgets(
-      new SingleValueWidget({ title: "Model cost (selected period, USD)", metrics: [costMetric], setPeriodToTimeRange: true }),
-      new SingleValueWidget({ title: "Model tokens (selected period)", metrics: [tokenMetric], setPeriodToTimeRange: true }),
-      new GraphWidget({ title: "Hourly model cost (USD)", left: [costMetric] }),
-      new GraphWidget({ title: "Hourly model tokens", left: [tokenMetric] }),
-    );
+    let costDashboard: Dashboard | undefined;
+    if (costDashboardEnabled) {
+      const settledCostFilter = new MetricFilter(this, "RecordedModelCostMetric", {
+        logGroup: runtimeLogGroup,
+        filterPattern: FilterPattern.literal('{ $.event = "model.cost.recorded" && $.actualUsd = * }'),
+        metricNamespace: names.metricNamespace,
+        metricName: "SettledModelCostUsd",
+        metricValue: "$.actualUsd",
+        defaultValue: 0,
+      });
+      const settledTokensFilter = new MetricFilter(this, "RecordedModelTokensMetric", {
+        logGroup: runtimeLogGroup,
+        filterPattern: FilterPattern.literal('{ $.event = "model.cost.recorded" && $.actualTokens = * }'),
+        metricNamespace: names.metricNamespace,
+        metricName: "SettledModelTokens",
+        metricValue: "$.actualTokens",
+        defaultValue: 0,
+      });
+      costDashboard = new Dashboard(this, "CostDashboard", {
+        dashboardName: names.dashboardName,
+      });
+      const costMetric = settledCostFilter.metric({ statistic: "Sum", period: Duration.hours(1) });
+      const tokenMetric = settledTokensFilter.metric({ statistic: "Sum", period: Duration.hours(1) });
+      costDashboard.addWidgets(
+        new SingleValueWidget({ title: "Model cost (selected period, USD)", metrics: [costMetric], setPeriodToTimeRange: true }),
+        new SingleValueWidget({ title: "Model tokens (selected period)", metrics: [tokenMetric], setPeriodToTimeRange: true }),
+        new GraphWidget({ title: "Hourly model cost (USD)", left: [costMetric] }),
+        new GraphWidget({ title: "Hourly model tokens", left: [tokenMetric] }),
+      );
+    }
     configureLoggingDelivery(this, agentRuntime.attrAgentRuntimeArn, [
       { logType: LogType.APPLICATION_LOGS, destination: LoggingDestination.cloudWatchLogs(runtimeLogGroup) },
       { logType: LogType.USAGE_LOGS, destination: LoggingDestination.cloudWatchLogs(runtimeLogGroup) },
@@ -686,7 +737,17 @@ export class AgentCoreCostControlStack extends Stack {
             loginMethods,
           },
           ui: { name: runtimeDisplayName },
-          agent: { runtimeArn: agentRuntime.attrAgentRuntimeArn, qualifier: "DEFAULT" },
+          defaultAgentId: "primary",
+          agents: [
+            {
+              id: "primary",
+              name: runtimeDisplayName,
+              description: "このスタックで管理するRuntime",
+              runtimeArn: agentRuntime.attrAgentRuntimeArn,
+              qualifier: "DEFAULT",
+            },
+            ...additionalRuntimeAgents,
+          ],
           features: { enabledModelKeys },
         }),
       ],
@@ -721,7 +782,7 @@ export class AgentCoreCostControlStack extends Stack {
     new CfnOutput(this, "BudgetScopeId", { value: budgetScopeId });
     new CfnOutput(this, "ModelPricingCatalogBucketName", { value: pricingCatalogBucket.bucketName });
     if (pricingVerifier) new CfnOutput(this, "PricingVerifierFunctionName", { value: pricingVerifier.functionName });
-    new CfnOutput(this, "CostDashboardName", { value: costDashboard.dashboardName });
+    if (costDashboard) new CfnOutput(this, "CostDashboardName", { value: costDashboard.dashboardName });
     new CfnOutput(this, "MonthlyBudgetUsd", { value: this.node.tryGetContext("monthlyBudgetUsd")?.toString() ?? "60" });
   }
 }

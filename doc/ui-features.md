@@ -22,12 +22,13 @@ UIはCognitoで認証し、ブラウザからAgentCore Runtimeへ直接AG-UIリ�
 | チャット | ツール表示 | ツール名、入力、出力、エラー、実行状態を汎用カードで表示 |
 | チャット | 履歴復元 | AgentCore Memoryから会話一覧とメッセージを復元 |
 | チャット | 新規・切替・削除 | 複数チャットの作成、切替、Memory上の削除 |
+| 接続 | Runtime切替 | ヘッダーのアプリ名からconfig登録済みRuntimeを選択 |
 | 編集 | メッセージ操作 | コピー、ユーザー発言の編集、分岐切替 |
 | 実行 | 生成停止 | 実行中リクエストをキャンセル |
 | 入力 | 添付 | 画像とテキストファイルをComposerへ添付 |
 | 入力 | カメラ | ブラウザのカメラで撮影して画像添付 |
 | 入力 | 音声入力 | Web Speech APIによる日本語の連続音声入力 |
-| 出力 | Markdown | GFM対応Markdown、コード、リンクなどを表示 |
+| 出力 | Markdown | GFM対応Markdown、見出し、表、コードブロック、コードコピー、Mermaid図を表示 |
 | 出力 | 音声読み上げ | Web Speech APIの読み上げAdapterを提供 |
 | 推論 | モデル選択 | BedrockモデルとGeminiから実行モデルを選択し、アプリ月額上限の事前判定を表示 |
 | 推論 | Reasoning設定 | ON/OFFと対応モデルのLow・Medium・Highを選択 |
@@ -40,7 +41,7 @@ UIはCognitoで認証し、ブラウザからAgentCore Runtimeへ直接AG-UIリ�
 
 ## 認証とRuntime接続
 
-起動時に`/runtime-config.json`を取得し、CognitoとAgentCore Runtimeの接続先を確定します。設定が不足・不正な場合は初期化エラーとして停止し、別の値へフォールバックしません。
+起動時に`/runtime-config.json`を取得し、Cognitoと複数のAgentCore Runtime接続先を確定します。設定が不足または不正な場合は初期化エラーとして停止し、別の値へフォールバックしません。ヘッダーのアプリ名を選ぶとRuntime単位でチャットRuntimeを作り直します。実行中とHuman in the loopの回答待ち中は切替を無効化します。
 
 Cognitoが`CONFIRM_SIGN_IN_WITH_NEW_PASSWORD_REQUIRED`を返した場合は、新しいパスワードと確認値の入力へ切り替え、Amplify `confirmSignIn`で初回チャレンジを完了します。12文字以上をUIでも検査し、英大文字・英小文字・数字・記号のUser PoolポリシーはCognitoの結果をそのままエラー表示します。「ログイン画面へ戻る」では未完了のサインイン状態を終了してから通常入力へ戻ります。
 
@@ -185,5 +186,6 @@ CDKコンテキスト`webDebugMode=on`でブラウザデバッグを有効化で
 | `src/components/runtime/inference-settings.tsx` | モデルとReasoning選択 |
 | `src/components/runtime/run-error-aware-http-agent.ts` | `RUN_ERROR`をassistant-uiの失敗通知へ接続 |
 | `src/lib/debug.ts` | ブラウザデバッグの切り替え、マスク、Console出力 |
-| `src/components/markdown-text.tsx` | Markdown表示 |
+| `src/components/markdown-text.tsx` | GFM、コードコピー、Mermaidを含むMarkdown表示 |
+| `src/components/mermaid-diagram.tsx` | MermaidコードブロックのSVG描画とエラー表示 |
 | `shared/model-catalog.ts` | モデル一覧と推論制約 |

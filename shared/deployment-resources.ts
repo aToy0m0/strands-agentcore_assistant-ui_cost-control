@@ -2,6 +2,9 @@ const KNOWLEDGE_BASE_ID_PATTERN = /^[0-9A-Z]{10}$/u;
 const KEY_PATTERN = /^[a-z][a-z0-9-]{0,39}$/u;
 const TOOL_NAME_PATTERN = /^[a-z][a-z0-9_]{0,63}$/u;
 const REGION_PATTERN = /^[a-z]{2}(?:-gov)?-[a-z]+-\d$/u;
+const RUNTIME_ARN_PATTERN = /^arn:aws(?:-[^:]+)?:bedrock-agentcore:[a-z0-9-]+:\d{12}:runtime\/[A-Za-z][A-Za-z0-9_]{0,47}-[A-Za-z0-9]{10}$/u;
+const RUNTIME_ID_PATTERN = /^[A-Za-z][A-Za-z0-9_]{0,99}-[A-Za-z0-9]{10}$/u;
+const ACCOUNT_ID_PATTERN = /^\d{12}$/u;
 
 export type KnowledgeBaseConfig = {
   key: string;
@@ -20,6 +23,21 @@ export type GatewayLambdaTargetConfig = {
   memorySizeMb: number;
   environmentVariables: Record<string, string>;
 };
+
+type AdditionalRuntimeBase = {
+  id: string;
+  name: string;
+  description: string;
+  qualifier: string;
+};
+
+export type AdditionalRuntimeConfig = AdditionalRuntimeBase & ({
+  runtimeArn: string;
+} | {
+  runtimeId: string;
+  region: string;
+  accountId?: string;
+});
 
 function record(value: unknown, name: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error(`${name} must be an object`);
@@ -136,6 +154,47 @@ export function parseGatewayLambdaTargets(configured: unknown): GatewayLambdaTar
     };
   });
   assertUnique(parsed.map((entry) => entry.key), "gatewayTargets keys");
+  return parsed;
+}
+
+export function parseAdditionalRuntimes(configured: unknown): AdditionalRuntimeConfig[] {
+  if (configured === undefined) return [];
+  const parsed = parseJsonArray(configured, "additionalRuntimes").map((entry, index) => {
+    const item = record(entry, `additionalRuntimes[${index}]`);
+    const id = stringValue(item.id, `additionalRuntimes[${index}].id`);
+    if (!KEY_PATTERN.test(id)) throw new Error(`additionalRuntimes[${index}].id has an invalid format`);
+    if (id === "primary") throw new Error("additionalRuntimes id 'primary' is reserved for the Runtime managed by this stack");
+    const base = {
+      id,
+      name: stringValue(item.name, `additionalRuntimes[${index}].name`),
+      description: stringValue(item.description, `additionalRuntimes[${index}].description`),
+      qualifier: item.qualifier === undefined ? "DEFAULT" : stringValue(item.qualifier, `additionalRuntimes[${index}].qualifier`),
+    };
+    const hasRuntimeArn = item.runtimeArn !== undefined;
+    const hasRuntimeId = item.runtimeId !== undefined;
+    if (hasRuntimeArn === hasRuntimeId) {
+      throw new Error(`additionalRuntimes[${index}] must specify exactly one of runtimeArn or runtimeId`);
+    }
+    if (hasRuntimeArn) {
+      if (item.region !== undefined || item.accountId !== undefined) {
+        throw new Error(`additionalRuntimes[${index}] must not specify region or accountId with runtimeArn`);
+      }
+      const runtimeArn = stringValue(item.runtimeArn, `additionalRuntimes[${index}].runtimeArn`);
+      if (!RUNTIME_ARN_PATTERN.test(runtimeArn)) {
+        throw new Error(`additionalRuntimes[${index}].runtimeArn must be an AgentCore Runtime ARN`);
+      }
+      return { ...base, runtimeArn };
+    }
+    const runtimeId = stringValue(item.runtimeId, `additionalRuntimes[${index}].runtimeId`);
+    const region = stringValue(item.region, `additionalRuntimes[${index}].region`);
+    if (!RUNTIME_ID_PATTERN.test(runtimeId)) throw new Error(`additionalRuntimes[${index}].runtimeId has an invalid format`);
+    if (!REGION_PATTERN.test(region)) throw new Error(`additionalRuntimes[${index}].region has an invalid format`);
+    if (item.accountId === undefined) return { ...base, runtimeId, region };
+    const accountId = stringValue(item.accountId, `additionalRuntimes[${index}].accountId`);
+    if (!ACCOUNT_ID_PATTERN.test(accountId)) throw new Error(`additionalRuntimes[${index}].accountId must be a 12-digit AWS account ID`);
+    return { ...base, runtimeId, region, accountId };
+  });
+  assertUnique(parsed.map((entry) => entry.id), "additionalRuntimes IDs");
   return parsed;
 }
 

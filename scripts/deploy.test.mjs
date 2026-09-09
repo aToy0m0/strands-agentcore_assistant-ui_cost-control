@@ -14,6 +14,7 @@ function config(overrides = {}) {
     allowCrossRegionKnowledgeBases: false,
     knowledgeBases: [],
     gatewayTargets: [],
+    additionalRuntimes: [],
     geminiEnabled: false,
     enabledModelKeys: ["nova-2-lite"],
     modelIds: { "nova-2-lite": "us.amazon.nova-2-lite-v1:0" },
@@ -25,6 +26,7 @@ function config(overrides = {}) {
     runtimeLogTool: "on",
     monthlyBudgetUsd: "60",
     priceVerificationEnabled: false,
+    costDashboardEnabled: false,
     ...overrides,
   };
 }
@@ -35,6 +37,7 @@ describe("deployment config", () => {
     const args = cdkArguments(value, "diff");
     assert.deepEqual(args.slice(0, 8), ["run", "--silent", "cdk:diff", "--", "--profile", "cdkdep", "--region", "us-east-1"]);
     assert.ok(args.some((entry) => entry.startsWith("knowledgeBasesBase64=")));
+    assert.ok(args.some((entry) => entry.startsWith("additionalRuntimesBase64=")));
     assert.ok(args.some((entry) => entry.startsWith("modelIdsBase64=")));
   });
 
@@ -49,6 +52,7 @@ describe("deployment config", () => {
   it("rejects unknown fields and missing conditional values", () => {
     assert.throws(() => validateDeployConfig(config({ unknown: true })), /unsupported fields/u);
     assert.throws(() => validateDeployConfig(config({ customDomainEnabled: true })), /customDomainName/u);
+    assert.throws(() => validateDeployConfig(config({ costDashboardEnabled: "false" })), /costDashboardEnabled must be true or false/u);
   });
 
   it("USと東京のサンプルJSONが同じ検証を通る", () => {

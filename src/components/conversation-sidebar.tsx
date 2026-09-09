@@ -1084,7 +1084,7 @@ function ProjectDialog({
             <label htmlFor="project-name" className="text-sm font-medium">
               プロジェクト名
             </label>
-            <div className="flex h-10 items-center rounded-lg border focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20">
+            <div className="flex h-10 items-center rounded-lg border bg-background focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20">
               <Popover>
                 <PopoverTrigger asChild>
                   <button
@@ -1164,7 +1164,7 @@ function ProjectDialog({
                 id="project-name"
                 value={name}
                 onChange={(event) => setName(event.target.value)}
-                className="h-full border-0 px-1 shadow-none focus-visible:ring-0"
+                className="h-full rounded-none border-0 bg-transparent px-1 shadow-none focus-visible:ring-0"
                 placeholder="例: コペンハーゲン旅行"
               />
             </div>
