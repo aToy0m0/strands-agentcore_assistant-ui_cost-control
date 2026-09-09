@@ -53,7 +53,7 @@ strands-agentcore_assistant-ui_cost-control/
 | `shared/` | 複数レイヤーで一致させる定義 | ログイン方式、モデルカタログ、S3価格カタログ初期値 |
 | `scripts/` | デプロイと構築後の管理作業 | JSON configによるCDKデプロイ、Cognitoユーザー、費用状況の確認、Entra操作 |
 | `test/` | ルート側の回帰テスト | UIロジック、設定、CDKテンプレートの検証 |
-| `public/` | 開発時の静的ファイル | ローカル用`runtime-config.json` |
+| `public/` | 開発時の静的ファイル | ローカル用`runtime-config.json`、背景透過PNGのファビコン |
 | `doc/` | 利用者・開発者向け資料 | デプロイ、セキュリティ、フォルダ構成 |
 
 ## 下位階層まで見れば変更箇所を特定できる
@@ -92,7 +92,7 @@ strands-agentcore_assistant-ui_cost-control/
 | `scripts/` | デプロイ設定を渡し、Cognitoユーザーを管理して費用状況を確認する | `deploy.mjs`、`manage-cognito-user.mjs`、`show-cost-status.mjs` |
 | `scripts/entra/` | Microsoft Graph経由でEntra OIDCアプリを管理する | `New-EntraCognitoOidcApplication.ps1`、`Update-EntraCognitoOidcRedirectUri.ps1`など |
 | `test/` | UIロジック、共有定義、CDKテンプレートを回帰検証する | `config.test.ts`、`login-methods.test.ts`、`infrastructure.test.ts` |
-| `public/` | ローカル開発時にViteがそのまま配信する静的設定を置く | `runtime-config.json` |
+| `public/` | ローカル開発時にViteがそのまま配信する静的設定と画面アセットを置く | `runtime-config.json`、`favicon.png` |
 
 ## フロントエンド
 
@@ -101,7 +101,8 @@ strands-agentcore_assistant-ui_cost-control/
 - `components/login-form.tsx`: CognitoとMicrosoft Entra IDのログイン入口
 - `components/workspace.tsx`: 認証後画面の組み立て
 - `components/conversation-sidebar.tsx`: 新規チャット、一覧、アーカイブ表示
-- `components/chat-thread.tsx`: メッセージと入力欄
+- `components/chat-thread.tsx`: メッセージ、入力欄、Markdownプレビュー
+- `components/markdown-text.tsx`: 回答と入力プレビューで共用するMarkdown表示
 - `components/runtime/ag-ui-runtime-provider.tsx`: assistant-uiをAgentCore Runtimeへ接続
 - `components/ui/`: Radix系の再利用可能な表示部品
 - `lib/agents.ts`: 画面に表示するエージェント情報

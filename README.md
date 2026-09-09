@@ -8,6 +8,7 @@ Amazon BedrockとGoogle Geminiを同じチャットUIから利用し、アプリ
 - AgentCore Runtimeとブラウザ間のAG-UIストリーミング
 - AgentCore Memoryによる会話履歴と利用者単位の長期記憶
 - 複数のAgentCore Runtimeをヘッダーから切り替えるUI
+- 回答と同じMarkdownレンダーを使った送信前プレビュー
 - 複数のBedrock Knowledge Base検索ツール。Gateway Lambda経由を優先し、Runtime直接検索も予備として保持
 - AgentCore Gateway経由の複数Lambdaターゲットとmetadata JSONによるKnowledge Base絞り込み
 - Amazon BedrockとGoogle Geminiを共通UIから選択するモデルカタログ

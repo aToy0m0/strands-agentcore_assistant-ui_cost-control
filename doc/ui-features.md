@@ -28,6 +28,7 @@ UIはCognitoで認証し、ブラウザからAgentCore Runtimeへ直接AG-UIリ�
 | 入力 | 添付 | 画像とテキストファイルをComposerへ添付 |
 | 入力 | カメラ | ブラウザのカメラで撮影して画像添付 |
 | 入力 | 音声入力 | Web Speech APIによる日本語の連続音声入力 |
+| 入力 | Markdownプレビュー | 入力内容を回答と同じMarkdownレンダーで送信前に確認 |
 | 出力 | Markdown | GFM対応Markdown、見出し、表、コードブロック、コードコピー、Mermaid図を表示 |
 | 出力 | 音声読み上げ | Web Speech APIの読み上げAdapterを提供 |
 | 推論 | モデル選択 | BedrockモデルとGeminiから実行モデルを選択し、アプリ月額上限の事前判定を表示 |
@@ -35,6 +36,8 @@ UIはCognitoで認証し、ブラウザからAgentCore Runtimeへ直接AG-UIリ�
 | 推論 | 料金表示 | モデルごとの100万トークン単価を選択UIに表示 |
 | 表示 | レスポンシブUI | デスクトップの開閉サイドバーとモバイルドロワー。モバイルはVisual Viewportに追従してソフトウェアキーボード表示時も会話とComposerを表示領域へ収める |
 | 表示 | 没入表示 | サイドバーとヘッダーを隠してチャットへ集中 |
+| 表示 | Runtime選択 | ヘッダーのピル型メニューから接続先Runtimeを選択 |
+| 表示 | タブアイコン | 背景透過PNGをブラウザのファビコンとして表示 |
 | 表示 | テーマ | システム、ライト、ダークを選択 |
 | 表示 | 通知 | 認証、履歴、添付、カメラなどの結果をトースト表示。AG-UI実行エラーは会話内だけに表示 |
 | 診断 | ブラウザデバッグ | デプロイ時にON/OFFを切り替え、HTTP・SSE・履歴・AG-UIイベントをConsoleへ出力 |
@@ -84,12 +87,20 @@ AG-UIのReasoningイベントを回答本文と分けて表示します。Gemini
 ## 入力機能
 
 - 複数行テキスト入力
+- 入力内容のMarkdownプレビュー
 - 送信と生成停止
 - 画像ファイルの添付
 - テキストファイルの添付
 - カメラ権限を利用した写真撮影と添付
 - Web Speech API対応ブラウザでの日本語音声入力
 - 添付の送信前確認と削除
+
+入力中に目のアイコンを選ぶと、Composer内のテキストを同じ領域でMarkdown表示へ切り替えます。
+鉛筆のアイコンで編集へ戻ります。
+プレビューには回答表示と共通の`MarkdownText`を使うため、GFM、コードブロック、コードコピー、Mermaid図の扱いが一致します。
+
+プレビューは表示だけを切り替え、送信する原文を変更しません。
+送信後はプレビュー状態を解除し、次の入力を通常のテキスト編集から開始します。
 
 カメラやマイクの利用拒否、非対応ブラウザ、読み込み失敗はトーストまたはダイアログ内で明示します。
 
@@ -181,11 +192,11 @@ CDKコンテキスト`webDebugMode=on`でブラウザデバッグを有効化で
 | `src/components/login-form.tsx` | Cognito・Entraログイン |
 | `src/components/workspace.tsx` | 認証後レイアウト、設定、通知 |
 | `src/components/conversation-sidebar.tsx` | チャット・プロジェクト・アーカイブUI |
-| `src/components/chat-thread.tsx` | メッセージ、入力、添付、ツール、Reasoning |
+| `src/components/chat-thread.tsx` | メッセージ、入力、Markdownプレビュー、添付、ツール、Reasoning |
 | `src/components/runtime/ag-ui-runtime-provider.tsx` | AG-UI、認証fetch、履歴、各Adapter |
 | `src/components/runtime/inference-settings.tsx` | モデルとReasoning選択 |
 | `src/components/runtime/run-error-aware-http-agent.ts` | `RUN_ERROR`をassistant-uiの失敗通知へ接続 |
 | `src/lib/debug.ts` | ブラウザデバッグの切り替え、マスク、Console出力 |
-| `src/components/markdown-text.tsx` | GFM、コードコピー、Mermaidを含むMarkdown表示 |
+| `src/components/markdown-text.tsx` | 回答と入力プレビューで共用するGFM、コードコピー、Mermaid対応Markdown表示 |
 | `src/components/mermaid-diagram.tsx` | MermaidコードブロックのSVG描画とエラー表示 |
 | `shared/model-catalog.ts` | モデル一覧と推論制約 |
